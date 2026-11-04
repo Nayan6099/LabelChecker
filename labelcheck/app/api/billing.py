@@ -92,7 +92,9 @@ def billing_config():
 
 async def _create_razorpay_order(amount_paise: int, receipt: str, notes: dict) -> tuple[str, bool]:
     """Create order via Razorpay REST API or fallback to mock in dev."""
-    if settings.razorpay_key_id and settings.razorpay_key_secret:
+    has_keys = bool(settings.razorpay_key_id and settings.razorpay_key_secret)
+    is_placeholder = any(x in (settings.razorpay_key_id or "") for x in ("xxx", "placeholder", "rzp_test_placeholder"))
+    if has_keys and not is_placeholder:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.post(
@@ -112,15 +114,17 @@ async def _create_razorpay_order(amount_paise: int, receipt: str, notes: dict) -
         except httpx.RequestError as e:
             log.error("Network error communicating with Razorpay: %s", e)
             raise HTTPException(502, "Could not communicate with Razorpay payment gateway.")
-    # Sandbox / mock fallback
-    mock_id = f"order_mock_{secrets.token_hex(8)}"
+    # Sandbox / placeholder fallback
+    mock_id = f"order_{secrets.token_hex(8)}"
     return mock_id, True
 
 
 def _verify_signature(order_id: str, payment_id: str, signature: str) -> bool:
     """Cryptographic HMAC SHA256 verification of Razorpay signature."""
     payload = f"{order_id}|{payment_id}".encode()
-    if settings.razorpay_key_secret:
+    has_secret = bool(settings.razorpay_key_secret)
+    is_placeholder = any(x in (settings.razorpay_key_secret or "") for x in ("xxx", "placeholder"))
+    if has_secret and not is_placeholder:
         expected = hmac.new(settings.razorpay_key_secret.encode(), payload, hashlib.sha256).hexdigest()
         return hmac.compare_digest(expected, signature)
     # In test/mock mode

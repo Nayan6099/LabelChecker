@@ -256,6 +256,9 @@ def _credentials(request: Request):
     if h.lower().startswith("bearer "):
         t = h[7:].strip()
         return t, "api_key" if t.startswith("lc_") else "bearer"
+    q_token = request.query_params.get("session_token")
+    if q_token:
+        return q_token, "bearer"
     return request.cookies.get(COOKIE), "cookie"
 
 

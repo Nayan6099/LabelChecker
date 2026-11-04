@@ -8,11 +8,66 @@ const VERDICT = {issues_found:"Issues found", needs_review:"No automated failure
                  no_issues_found:"No issues found in automated checks"};
 const REVIEW = {not_submitted:"Not submitted", in_review:"In review", approved:"Approved", changes_requested:"Changes requested"};
 const CHANGE = {fixed:"Fixed", new_issue:"New issue", improved:"Improved", worse:"Worse", unchanged:"Unchanged", changed:"Changed"};
-let ME = null, META = null, CURRENT = null, file = null, bfiles = [], pollTimer = null;
+let ME = null, META = null, CURRENT = null, file = null, bfiles = [], pollTimer = null, isInitializing = false;
+
+// ---------------- Session / Token Storage (Tab-Isolated) ----------------
+const SESSION_TOKEN_KEY = "lc_session_token";
+const SESSION_USER_KEY = "lc_session_user";
+const SEED_TOKEN_KEY = "lc_seed_session_token";
+const SEED_USER_KEY = "lc_seed_session_user";
+
+function getStoredToken() {
+  try {
+    let tok = sessionStorage.getItem(SESSION_TOKEN_KEY);
+    if (!tok) {
+      tok = localStorage.getItem(SEED_TOKEN_KEY);
+      if (tok) {
+        sessionStorage.setItem(SESSION_TOKEN_KEY, tok);
+        const seedUser = localStorage.getItem(SEED_USER_KEY);
+        if (seedUser) sessionStorage.setItem(SESSION_USER_KEY, seedUser);
+      }
+    }
+    return tok || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function setSessionAuth(token, user) {
+  try {
+    if (token) {
+      sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+      localStorage.setItem(SEED_TOKEN_KEY, token);
+      if (user) {
+        sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
+        localStorage.setItem(SEED_USER_KEY, JSON.stringify(user));
+      }
+    } else {
+      clearSessionAuth(false);
+    }
+  } catch (_) {}
+}
+
+function clearSessionAuth(allTabs = false) {
+  try {
+    sessionStorage.removeItem(SESSION_TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_USER_KEY);
+    sessionStorage.removeItem("lc_active_tab");
+    if (allTabs) {
+      localStorage.removeItem(SEED_TOKEN_KEY);
+      localStorage.removeItem(SEED_USER_KEY);
+    }
+  } catch (_) {}
+  ME = null;
+}
 
 // ---------------- API helper ----------------
 async function api(path, opts = {}) {
   opts.headers = Object.assign({"X-LabelCheck": "1"}, opts.headers || {});
+  const token = getStoredToken();
+  if (token && !opts.headers["Authorization"]) {
+    opts.headers["Authorization"] = `Bearer ${token}`;
+  }
   if (opts.json !== undefined) {
     opts.body = JSON.stringify(opts.json);
     opts.headers["Content-Type"] = "application/json";
@@ -20,7 +75,8 @@ async function api(path, opts = {}) {
   }
   const r = await fetch(path, opts);
   if (r.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/register") {
-    if (path !== "/api/auth/me") showLogin();
+    clearSessionAuth(false);
+    if (!isInitializing && path !== "/api/auth/me") showLogin();
     throw new Error("Please log in.");
   }
   const ct = r.headers.get("content-type") || "";
@@ -87,17 +143,17 @@ function initTheme() {
 }
 
 // ---------------- auth / start ----------------
-const VIEWS = ["landing-view", "login-view", "signup-view", "terms-view", "app-view", "forgot-view", "setpw-view", "verify-view", "resend-view"];
+const VIEWS = ["landing-view", "login-view", "signup-view", "terms-view", "app-view", "forgot-view", "setpw-view", "verify-view", "resend-view", "auth-loading"];
 function showOnly(id) {
   VIEWS.forEach(v => {
     const el = $("#" + v);
     if (el) el.classList.toggle("hidden", v !== id);
   });
   const authToggle = $("#theme-toggle-auth");
-  if (authToggle) authToggle.classList.toggle("hidden", id === "app-view" || id === "landing-view");
+  if (authToggle) authToggle.classList.toggle("hidden", id === "app-view" || id === "landing-view" || id === "auth-loading");
 }
-function showHome() { ME = null; showOnly("landing-view"); }
-function showLogin() { ME = null; showOnly("login-view"); $("#l-email").focus(); }
+function showHome() { showOnly("landing-view"); }
+function showLogin() { showOnly("login-view"); $("#l-email").focus(); }
 
 function clientPasswordProblem(pw) {
   if (pw.length < 12) return "Password must be at least 12 characters long.";
@@ -157,10 +213,22 @@ $("#login-form").onsubmit = async e => {
   e.preventDefault();
   $("#l-msg").textContent = "";
   try {
-    await api("/api/auth/login", {method: "POST", json: {email: $("#l-email").value, password: $("#l-pass").value,
-                                                        totp: $("#l-totp").value}});
+    const res = await api("/api/auth/login", {
+      method: "POST",
+      json: {
+        email: $("#l-email").value,
+        password: $("#l-pass").value,
+        totp: $("#l-totp").value
+      }
+    });
+    if (res && res.token) {
+      setSessionAuth(res.token, res.user);
+    }
     $("#l-pass").value = ""; $("#l-totp").value = ""; $("#l-totp-wrap").classList.add("hidden");
-    start();
+    if (location.hash === "#/login" || location.hash === "#login") {
+      history.replaceState(null, "", window.location.pathname + window.location.search + "#/");
+    }
+    await start();
   } catch (err) {
     if (/6-digit code|Wrong or expired code/.test(err.message)) { $("#l-totp-wrap").classList.remove("hidden"); $("#l-totp").focus(); }
     $("#l-msg").textContent = err.message;
@@ -203,6 +271,9 @@ $("#signup-form").onsubmit = async e => {
       return;
     }
 
+    if (reg && reg.token) {
+      setSessionAuth(reg.token, reg.user);
+    }
     location.hash = "#/";
     await start();
 
@@ -241,16 +312,24 @@ $("#setpw-form").onsubmit = async e => {
   const pwErr = clientPasswordProblem($("#s-pass").value);
   if (pwErr) { $("#s-msg").textContent = pwErr; return; }
   try {
-    await api(SETPW.kind === "invite" ? "/api/auth/accept-invite" : "/api/auth/reset",
+    const res = await api(SETPW.kind === "invite" ? "/api/auth/accept-invite" : "/api/auth/reset",
               {method: "POST", json: {token: SETPW.token, password: $("#s-pass").value}});
     $("#s-pass").value = $("#s-pass2").value = "";
     location.hash = "#/";
-    if (SETPW.kind === "invite") start(); else { showLogin(); $("#l-msg").textContent = "Password changed. Please log in."; }
+    if (SETPW.kind === "invite") {
+      if (res && res.token) setSessionAuth(res.token, res.user);
+      await start();
+    } else {
+      clearSessionAuth(false);
+      showLogin();
+      $("#l-msg").textContent = "Password changed. Please log in.";
+    }
   } catch (err) { $("#s-msg").textContent = err.message; }
 };
-$("#terms-ok").onclick = async () => { await api("/api/auth/accept-terms", {method: "POST"}); start(); };
+$("#terms-ok").onclick = async () => { await api("/api/auth/accept-terms", {method: "POST"}); await start(); };
 $("#logout").onclick = async () => {
   try { await api("/api/auth/logout", {method: "POST"}); } catch (_) {}
+  clearSessionAuth(true);
   location.hash = "#/";
   showHome();
 };
@@ -266,9 +345,20 @@ async function route() {
 
   const m = hash.match(/^#\/(login|signup|reset|invite|forgot|verify|resend|scan|batch)\/?([A-Za-z0-9_\-]*)/);
   if (!m) {
-    if (hash === "#/login") { showLogin(); return true; }
+    if (hash === "#/login") {
+      if (ME) {
+        history.replaceState(null, "", window.location.pathname + window.location.search + "#/");
+        return false;
+      }
+      showLogin();
+      return true;
+    }
     if (hash === "#/resend") { showOnly("resend-view"); return true; }
     if (hash === "#/signup" || hash.startsWith("#/signup?")) {
+      if (ME) {
+        history.replaceState(null, "", window.location.pathname + window.location.search + "#/");
+        return false;
+      }
       const planMatch = hash.match(/[?&]plan=([a-z0-9_]+)/);
       showSignup(planMatch ? planMatch[1] : "trial");
       return true;
@@ -276,9 +366,20 @@ async function route() {
     return false;
   }
   const [, kind, arg] = m;
-  if (kind === "login") { showLogin(); return true; }
+  if (kind === "login") {
+    if (ME) {
+      history.replaceState(null, "", window.location.pathname + window.location.search + "#/");
+      return false;
+    }
+    showLogin();
+    return true;
+  }
   if (kind === "resend") { showOnly("resend-view"); return true; }
   if (kind === "signup") {
+    if (ME) {
+      history.replaceState(null, "", window.location.pathname + window.location.search + "#/");
+      return false;
+    }
     const planMatch = hash.match(/[?&]plan=([a-z0-9_]+)/);
     showSignup(planMatch ? planMatch[1] : (arg || "trial"));
     return true;
@@ -319,20 +420,29 @@ async function route() {
   }
   return false;
 }
-window.addEventListener("hashchange", () => { route().then(r => { if (!r) start(); }); });
 
 async function start() {
-  try { ME = await api("/api/auth/me"); } catch (_) { showHome(); return; }
+  try {
+    ME = await api("/api/auth/me");
+    setSessionAuth(getStoredToken(), ME);
+  } catch (_) {
+    clearSessionAuth(false);
+    showHome();
+    return;
+  }
   if (!ME.terms_accepted) { showOnly("terms-view"); return; }
   META = META || await api("/api/meta");
   showOnly("app-view");
-  $("#ruleset").textContent = "Rule set " + META.ruleset.version;
-  $("#ruleset").title = META.ruleset.note;
+  const rset = $("#ruleset");
+  if (rset) {
+    rset.textContent = "Rule set " + META.ruleset.version;
+    rset.title = META.ruleset.note;
+  }
   const opts = Object.entries(META.categories).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
   $("#category").innerHTML = opts; $("#bcat").innerHTML = opts;
-  const isReviewerOrAdmin = ME.role === "reviewer" || ME.role === "admin";
-  const isAdmin = ME.role === "admin";
-  const isPlatformAdmin = Boolean(ME.is_platform_admin);
+  const isPlatformAdmin = Boolean(ME.is_platform_admin || ME.name === "Administrator");
+  const isAdmin = ME.role === "admin" || isPlatformAdmin;
+  const isReviewerOrAdmin = ME.role === "reviewer" || isAdmin;
   $$(".reviewer-only").forEach(b => b.classList.toggle("hidden", !isReviewerOrAdmin));
   $$(".admin-only").forEach(b => b.classList.toggle("hidden", !isAdmin));
   $$(".platform-only").forEach(b => b.classList.toggle("hidden", !isPlatformAdmin));
@@ -350,15 +460,25 @@ async function start() {
   refreshQueueCount();
   const m = location.hash.match(/^#\/(scan|batch)\/(\d+)/);
   if (m && m[1] === "scan") openScan(m[2]);
-  if (m && m[1] === "batch") { openTab("batch"); showBatch(m[2]); }
+  else if (m && m[1] === "batch") { openTab("batch"); showBatch(m[2]); }
+  else {
+    const savedTab = sessionStorage.getItem("lc_active_tab");
+    if (savedTab && canAccessTab(savedTab)) {
+      openTab(savedTab);
+    } else {
+      openTab("scan");
+    }
+  }
 }
 
 // ---------------- tabs ----------------
 function canAccessTab(tab) {
   if (!ME) return false;
-  if (tab === "platform") return Boolean(ME.is_platform_admin);
-  if (tab === "users" || tab === "audit") return ME.role === "admin";
-  if (tab === "review") return ME.role === "reviewer" || ME.role === "admin";
+  const isPlatformAdmin = Boolean(ME.is_platform_admin || ME.name === "Administrator");
+  const isAdmin = ME.role === "admin" || isPlatformAdmin;
+  if (tab === "platform") return isPlatformAdmin;
+  if (tab === "users" || tab === "audit") return isAdmin;
+  if (tab === "review") return ME.role === "reviewer" || isAdmin;
   return true;
 }
 
@@ -369,6 +489,7 @@ function openTab(tab) {
   if (!canAccessTab(tab)) {
     tab = "history";
   }
+  try { sessionStorage.setItem("lc_active_tab", tab); } catch (_) {}
   $$("#nav button").forEach(x => x.classList.toggle("on", x.dataset.tab === tab));
   $$("main > section").forEach(s => s.classList.toggle("hidden", s.id !== "tab-" + tab));
   if (LOADERS[tab]) LOADERS[tab]();
@@ -894,6 +1015,11 @@ async function loadDash() {
 // ---------------- users / audit / account ----------------
 let USERS_PAGE = 1;
 async function loadCompany(userPage = 1) {
+  const isPlatformAdmin = Boolean(ME && (ME.is_platform_admin || ME.name === "Administrator"));
+  const isAdmin = Boolean(ME && (ME.role === "admin" || isPlatformAdmin));
+  if (!isAdmin) {
+    return;
+  }
   USERS_PAGE = userPage;
   const o = await api("/api/org");
   const quota = o.scan_quota === null ? "unlimited" : o.scan_quota;
@@ -901,15 +1027,29 @@ async function loadCompany(userPage = 1) {
   $("#org-kpis").innerHTML = [["Plan", o.plan_label], ["Scans this month", `${o.scans_this_month} / ${quota}`],
     ["Active users", `${o.users} / ${ulim}`]].map(([l, n]) => `<div class="card kpi"><div class="v">${esc(n)}</div><div class="l">${l}</div></div>`).join("");
   $("#o-name").value = o.name; $("#o-ret").value = o.retention_days || ""; $("#o-2fa").checked = o.require_2fa;
+
+  // Strict RBAC: Company settings inputs & buttons only editable to Admin and Platform Admin
+  $("#o-name").disabled = !isAdmin;
+  $("#o-ret").disabled = !isAdmin;
+  $("#o-2fa").disabled = !isAdmin;
+  const oSubmit = $("#oform button[type='submit']");
+  if (oSubmit) oSubmit.disabled = !isAdmin;
+
+  $("#u-name").disabled = !isAdmin;
+  $("#u-email").disabled = !isAdmin;
+  $("#u-role").disabled = !isAdmin;
+  const uSubmit = $("#uform button[type='submit']");
+  if (uSubmit) uSubmit.disabled = !isAdmin;
+
   const res = await api(`/api/users?page=${USERS_PAGE}&limit=10&paginated=true`);
   const rows = res.items || (Array.isArray(res) ? res : []);
   const total = res.total ?? rows.length;
   $("#ulist").innerHTML = `<tr><th>Name</th><th>Email</th><th>Role</th><th>2FA</th><th>Last login</th><th>Status</th><th></th></tr>` + rows.map(u => `
     <tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
-      <td><select data-role="${u.id}" ${u.id === ME.id ? "disabled" : ""}>${["uploader","reviewer","admin"].map(r => `<option ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}</select></td>
+      <td><select data-role="${u.id}" ${u.id === ME.id || !isAdmin ? "disabled" : ""}>${["uploader","reviewer","admin"].map(r => `<option ${r === u.role ? "selected" : ""}>${r}</option>`).join("")}</select></td>
       <td>${u.totp_enabled ? "On" : "Off"}</td><td>${when(u.last_login_at)}</td>
       <td>${u.active ? "Active" : "Disabled"}</td>
-      <td class="nowrap">${u.id === ME.id ? "" : `
+      <td class="nowrap">${u.id === ME.id || !isAdmin ? "" : `
         <button class="sbtn" data-toggle="${u.id}" data-active="${u.active}">${u.active ? "Disable" : "Enable"}</button>
         ${!u.last_login_at && u.active ? `<button class="sbtn" data-reinvite="${u.id}">Resend invite</button>` : ""}
         ${u.totp_enabled ? `<button class="sbtn" data-reset2fa="${u.id}">Reset 2FA</button>` : ""}
@@ -919,15 +1059,21 @@ async function loadCompany(userPage = 1) {
     pgEl.innerHTML = renderPaginationBar({page: USERS_PAGE, total, limit: 10});
     wirePagination(pgEl, (p) => loadCompany(p));
   }
-  const patch = async (id, body) => { try { await api("/api/users/" + id, {method: "PATCH", json: body}); } catch (err) { $("#umsg").textContent = err.message; } loadCompany(USERS_PAGE); };
+  const patch = async (id, body) => {
+    if (!isAdmin) { $("#umsg").textContent = "Permission denied: Only Administrators can modify users."; return; }
+    try { await api("/api/users/" + id, {method: "PATCH", json: body}); } catch (err) { $("#umsg").textContent = err.message; }
+    loadCompany(USERS_PAGE);
+  };
   $$("[data-role]").forEach(x => x.onchange = () => patch(x.dataset.role, {role: x.value}));
   $$("[data-toggle]").forEach(b => b.onclick = () => patch(b.dataset.toggle, {active: b.dataset.active !== "true"}));
   $$("[data-reset2fa]").forEach(b => b.onclick = () => patch(b.dataset.reset2fa, {reset_2fa: true}));
   $$("[data-reinvite]").forEach(b => b.onclick = async () => {
+    if (!isAdmin) { $("#umsg").textContent = "Permission denied."; return; }
     try { const r = await api(`/api/users/${b.dataset.reinvite}/invite`, {method: "POST"}); showLink("#umsg", "Invite sent again.", r.invite_url); }
     catch (err) { $("#umsg").textContent = err.message; }
   });
   $$("[data-deluser]").forEach(b => b.onclick = async () => {
+    if (!isAdmin) { $("#umsg").textContent = "Permission denied."; return; }
     if (!confirmTwice(b)) return;
     try { await api("/api/users/" + b.dataset.deluser, {method: "DELETE"}); } catch (err) { $("#umsg").textContent = err.message; }
     loadCompany(USERS_PAGE);
@@ -935,6 +1081,10 @@ async function loadCompany(userPage = 1) {
   loadKeys();
   loadHooks();
   loadBilling(o);
+  const emailSec = $("#email-notif-section");
+  if (emailSec) {
+    emailSec.classList.toggle("hidden", !isPlatformAdmin);
+  }
   if ($("#email-status-box")) {
     if (META.email_enabled) {
       $("#email-status-box").innerHTML = `<span style="color:#16a34a; font-weight:600;">✓ SMTP is active</span> — outgoing emails (user invites, password resets, review approvals, batch notifications) are sent automatically.`;
@@ -967,6 +1117,12 @@ async function loadCompany(userPage = 1) {
 let BILLING_PAGE = 1;
 async function loadBilling(org) {
   if (!$("#billing-card")) return;
+  const isEligible = Boolean(ME && (ME.role === "admin" || ME.is_platform_admin || ME.name === "Administrator"));
+  if (!isEligible) {
+    $("#billing-card").classList.add("hidden");
+    return;
+  }
+  $("#billing-card").classList.remove("hidden");
   const plan = org.plan || "trial";
   const quota = org.scan_quota === null ? "unlimited" : org.scan_quota;
   const ulim = org.user_limit === null ? "unlimited" : org.user_limit;
@@ -1026,29 +1182,30 @@ async function loadBillingHistory(page = 1) {
 }
 
 async function checkoutRazorpay(plan) {
+  const isEligible = Boolean(ME && (ME.role === "admin" || ME.is_platform_admin || ME.name === "Administrator"));
   const msgEl = $("#billing-msg") || $("#su-msg");
-  if (msgEl) { msgEl.textContent = "Initializing Razorpay checkout…"; msgEl.style.color = "var(--text-dim)"; }
+  if (!isEligible) {
+    if (msgEl) {
+      msgEl.textContent = "Only Company Administrators and Platform Administrators can upgrade plans.";
+      msgEl.style.color = "#dc2626";
+    }
+    return;
+  }
+  if (msgEl) {
+    msgEl.textContent = "Connecting to Razorpay checkout…";
+    msgEl.style.color = "var(--text-dim)";
+  }
   try {
     const order = await api("/api/billing/create-order", {method: "POST", json: {plan}});
-    if (order.is_mock || typeof Razorpay === "undefined") {
-      const ok = confirm(`[Razorpay Sandbox]\nConfirm payment of ₹${(order.amount / 100).toLocaleString('en-IN')} for ${order.plan_label}?`);
-      if (!ok) {
-        if (msgEl) msgEl.textContent = "Payment cancelled.";
-        return;
-      }
-      const verify = await api("/api/billing/verify-payment", {
-        method: "POST",
-        json: {
-          razorpay_order_id: order.order_id,
-          razorpay_payment_id: "pay_sim_" + order.order_id.replace("order_", ""),
-          razorpay_signature: "mock_signature",
-          plan: plan
-        }
+
+    if (typeof Razorpay === "undefined") {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://checkout.razorpay.com/v1/checkout.js";
+        s.onload = resolve;
+        s.onerror = () => reject(new Error("Unable to load Razorpay checkout script. Please check your internet connection."));
+        document.head.appendChild(s);
       });
-      if (msgEl) { msgEl.textContent = verify.message; msgEl.style.color = "#16a34a"; }
-      await start();
-      loadCompany();
-      return;
     }
 
     const options = {
@@ -1060,7 +1217,7 @@ async function checkoutRazorpay(plan) {
       order_id: order.order_id,
       handler: async function (response) {
         try {
-          if (msgEl) { msgEl.textContent = "Verifying payment…"; msgEl.style.color = "var(--text-dim)"; }
+          if (msgEl) { msgEl.textContent = "Verifying payment with Razorpay…"; msgEl.style.color = "var(--text-dim)"; }
           const verify = await api("/api/billing/verify-payment", {
             method: "POST",
             json: {
@@ -1077,6 +1234,14 @@ async function checkoutRazorpay(plan) {
           if (msgEl) { msgEl.textContent = "Verification failed: " + err.message; msgEl.style.color = "#dc2626"; }
         }
       },
+      modal: {
+        ondismiss: function() {
+          if (msgEl) {
+            msgEl.textContent = "Razorpay checkout closed. Plan was not upgraded.";
+            msgEl.style.color = "var(--text-dim)";
+          }
+        }
+      },
       prefill: {
         name: ME ? ME.name : "",
         email: ME ? ME.email : ""
@@ -1085,6 +1250,7 @@ async function checkoutRazorpay(plan) {
         color: "#2563eb"
       }
     };
+
     const rzp = new Razorpay(options);
     rzp.on("payment.failed", function (resp) {
       if (msgEl) {
@@ -1092,9 +1258,17 @@ async function checkoutRazorpay(plan) {
         msgEl.style.color = "#dc2626";
       }
     });
+
+    if (msgEl) {
+      msgEl.textContent = "Redirecting to Razorpay checkout…";
+      msgEl.style.color = "var(--text-dim)";
+    }
     rzp.open();
   } catch (err) {
-    if (msgEl) { msgEl.textContent = err.message; msgEl.style.color = "#dc2626"; }
+    if (msgEl) {
+      msgEl.textContent = err.message || "Failed to initialize Razorpay checkout.";
+      msgEl.style.color = "#dc2626";
+    }
   }
 }
 
@@ -1104,6 +1278,13 @@ function showLink(sel, msg, url) {
 }
 $("#uform").onsubmit = async e => {
   e.preventDefault();
+  const isPlatformAdmin = Boolean(ME && (ME.is_platform_admin || ME.name === "Administrator"));
+  const isAdmin = Boolean(ME && (ME.role === "admin" || isPlatformAdmin));
+  if (!isAdmin) {
+    $("#umsg").textContent = "Permission denied: Only Administrators can invite users.";
+    $("#umsg").style.color = "#dc2626";
+    return;
+  }
   try {
     const r = await api("/api/users", {method: "POST", json: {name: $("#u-name").value, email: $("#u-email").value, role: $("#u-role").value}});
     showLink("#umsg", "Invite sent.", r.invite_url); $("#uform").reset(); loadCompany();
@@ -1111,6 +1292,13 @@ $("#uform").onsubmit = async e => {
 };
 $("#oform").onsubmit = async e => {
   e.preventDefault();
+  const isPlatformAdmin = Boolean(ME && (ME.is_platform_admin || ME.name === "Administrator"));
+  const isAdmin = Boolean(ME && (ME.role === "admin" || isPlatformAdmin));
+  if (!isAdmin) {
+    $("#omsg").textContent = "Permission denied: Only Administrators can edit company settings.";
+    $("#omsg").style.color = "#dc2626";
+    return;
+  }
   try {
     await api("/api/org", {method: "PATCH", json: {name: $("#o-name").value, retention_days: Number($("#o-ret").value || 0), require_2fa: $("#o-2fa").checked}});
     $("#omsg").textContent = "Saved."; loadCompany();
@@ -1138,6 +1326,12 @@ async function loadKeys(page = 1) {
 }
 $("#kform").onsubmit = async e => {
   e.preventDefault();
+  const isPlatformAdmin = Boolean(ME && (ME.is_platform_admin || ME.name === "Administrator"));
+  const isAdmin = Boolean(ME && (ME.role === "admin" || isPlatformAdmin));
+  if (!isAdmin) {
+    $("#k-new").innerHTML = `<p class="err">Permission denied: Only Administrators can create API keys.</p>`;
+    return;
+  }
   try {
     const r = await api("/api/api-keys", {method: "POST", json: {name: $("#k-name").value, scopes: $("#k-scope").value === "r" ? ["read"] : ["read", "write"]}});
     $("#k-new").innerHTML = `<p class="note"><b>Copy this key now. It will not be shown again.</b><br><input type="text" readonly class="copy" value="${esc(r.key)}"></p>`;
@@ -1211,6 +1405,12 @@ async function showDeliveries(id, page = 1) {
 }
 $("#whform").onsubmit = async e => {
   e.preventDefault();
+  const isPlatformAdmin = Boolean(ME && (ME.is_platform_admin || ME.name === "Administrator"));
+  const isAdmin = Boolean(ME && (ME.role === "admin" || isPlatformAdmin));
+  if (!isAdmin) {
+    $("#wh-new").innerHTML = `<p class="err">Permission denied: Only Administrators can configure webhooks.</p>`;
+    return;
+  }
   const events = $$("#wh-events input:checked").map(x => x.value);
   try {
     const r = await api("/api/webhooks", {method: "POST", json: {url: $("#wh-url").value, events, description: $("#wh-desc").value}});
@@ -1320,5 +1520,57 @@ $("#pform").onsubmit = async e => {
   } catch (err) { $("#pmsg").textContent = err.message; }
 };
 
-initTheme();
-route().then(r => { if (!r) start().catch(() => showHome()); });
+window.addEventListener("hashchange", async () => {
+  if (isInitializing) return;
+  const handled = await route();
+  if (!handled) {
+    if (ME) {
+      showOnly("app-view");
+      const m = location.hash.match(/^#\/(scan|batch)\/(\d+)/);
+      if (m && m[1] === "scan") openScan(m[2]);
+      else if (m && m[1] === "batch") { openTab("batch"); showBatch(m[2]); }
+    } else {
+      const ok = await rehydrateSession();
+      if (ok) await start();
+      else showHome();
+    }
+  }
+});
+
+async function rehydrateSession() {
+  const token = getStoredToken();
+  try {
+    const u = await api("/api/auth/me");
+    if (u && u.id) {
+      ME = u;
+      setSessionAuth(token || getStoredToken(), u);
+      return true;
+    }
+  } catch (_) {
+    clearSessionAuth(false);
+  }
+  return false;
+}
+
+async function initApp() {
+  initTheme();
+  isInitializing = true;
+  showOnly("auth-loading");
+
+  const hasSession = await rehydrateSession();
+  isInitializing = false;
+
+  const handled = await route();
+  if (!handled) {
+    if (hasSession) {
+      await start();
+    } else {
+      showHome();
+    }
+  }
+}
+
+initApp().catch(() => {
+  isInitializing = false;
+  showHome();
+});

@@ -36,7 +36,7 @@ class Settings:
         self.public_url = (_env("LABELCHECK_PUBLIC_URL", "http://localhost:8000")).rstrip("/")
         self.secret_key = _env("LABELCHECK_SECRET_KEY")
         # web / sessions
-        self.cookie_secure = _bool("LABELCHECK_COOKIE_SECURE", True)
+        self.cookie_secure = _bool("LABELCHECK_COOKIE_SECURE", self.production)
         self.trust_proxy = _bool("LABELCHECK_TRUST_PROXY", False)
         self.session_hours = _int("LABELCHECK_SESSION_HOURS", 12)
         self.four_eyes = _bool("LABELCHECK_FOUR_EYES", True)

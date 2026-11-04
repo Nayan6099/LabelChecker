@@ -106,7 +106,7 @@ def scan_payload(s, user):
 
 
 def permissions(s, user):
-    r = auth.ROLES[user["role"]]
+    r = 3 if user.get("is_platform_admin") else auth.ROLES.get(user.get("role"), 1)
     own = s["user_id"] == user["id"]
     done = s["status"] == "done"
     human = user.get("via") != "api_key"

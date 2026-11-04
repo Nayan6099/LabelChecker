@@ -29,7 +29,7 @@ class LoginIn(BaseModel):
 
 def _session_response(user, token):
     resp = JSONResponse({"token": token, "user": public_user(user)})
-    resp.set_cookie(auth.COOKIE, token, httponly=True, secure=settings.cookie_secure, samesite="strict",
+    resp.set_cookie(auth.COOKIE, token, httponly=True, secure=settings.cookie_secure, samesite="lax",
                     max_age=settings.session_hours * 3600, path="/")
     return resp
 

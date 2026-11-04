@@ -23,6 +23,15 @@
   <span class="theme-icon">🌙</span> <span class="theme-label">Night</span>
 </button>
 
+<!-- AUTH REHYDRATING / LOADING VIEW -->
+<section id="auth-loading" class="center hidden">
+  <div class="card login" style="text-align: center; padding: 36px 24px;">
+    <div class="auth-spinner"></div>
+    <h3 style="margin: 0 0 8px; font-size: 16px;">Verifying session…</h3>
+    <p class="hint" style="margin: 0;">Restoring your workspace and permissions.</p>
+  </div>
+</section>
+
 <!-- LANDING PAGE -->
 <section id="landing-view" class="hidden">
   <header class="landing-header">
@@ -378,7 +387,6 @@
 <div id="app-view" class="hidden">
 <header>
   <h1>Label<span>Check</span></h1>
-  <span class="badge" id="ruleset">Rule set</span>
   <nav id="nav">
     <button data-tab="scan" class="on">Scan</button>
     <button data-tab="batch">Bulk upload</button>
@@ -501,11 +509,11 @@
   </section>
 
   <!-- COMPANY (admin) -->
-  <section id="tab-users" class="hidden">
+  <section id="tab-users" class="hidden admin-only">
     <div class="kpis" id="org-kpis"></div>
     <div class="grid">
       <div>
-        <form class="card" id="uform">
+        <form class="card admin-only" id="uform">
           <h2>Invite a user</h2>
           <label for="u-name">Name</label><input type="text" id="u-name" required maxlength="200">
           <label for="u-email">Email</label><input type="email" id="u-email" required>
@@ -519,7 +527,7 @@
           <button class="btn" type="submit">Send invite</button>
           <div class="hint" id="umsg"></div>
         </form>
-        <form class="card" id="oform" style="margin-top:20px">
+        <form class="card admin-only" id="oform" style="margin-top:20px">
           <h2>Company settings</h2>
           <label for="o-name">Company name</label><input type="text" id="o-name" maxlength="200">
           <label for="o-ret">Delete scans older than (days)</label>
@@ -527,11 +535,13 @@
           <div class="check"><input type="checkbox" id="o-2fa"> <span>Everyone must use two-step login (2FA)</span></div>
           <button class="btn" type="submit">Save settings</button>
           <div class="hint" id="omsg"></div>
-          <h2 style="margin-top:22px">Email notifications</h2>
-          <div id="email-status-box" class="hint">Checking email status...</div>
-          <div style="margin-top:8px;">
-            <button class="sbtn" id="send-test-email" type="button">Send test email</button>
-            <span class="hint" id="test-email-msg" style="margin-left:8px;"></span>
+          <div id="email-notif-section" class="platform-only hidden">
+            <h2 style="margin-top:22px">Email notifications</h2>
+            <div id="email-status-box" class="hint">Checking email status...</div>
+            <div style="margin-top:8px;">
+              <button class="sbtn" id="send-test-email" type="button">Send test email</button>
+              <span class="hint" id="test-email-msg" style="margin-left:8px;"></span>
+            </div>
           </div>
           <h2 style="margin-top:22px">Export all data</h2>
           <div class="hint">A ZIP with every scan, result, review, comment, user and audit entry (JSON).</div>
@@ -539,7 +549,7 @@
         </form>
       </div>
       <div>
-        <div class="card" id="billing-card">
+        <div class="card admin-only" id="billing-card">
           <h2>Subscription &amp; Plans (Razorpay)</h2>
           <div id="billing-current-info" class="hint" style="margin-bottom:12px;"></div>
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
@@ -594,9 +604,9 @@
   </section>
 
   <!-- PLATFORM (operator) -->
-  <section id="tab-platform" class="hidden">
+  <section id="tab-platform" class="hidden platform-only">
     <div class="grid">
-      <form class="card" id="pf-form">
+      <form class="card platform-only" id="pf-form">
         <h2>New customer company</h2>
         <label for="pf-name">Company name</label><input type="text" id="pf-name" required maxlength="200">
         <label for="pf-plan">Plan</label><select id="pf-plan"></select>
@@ -605,12 +615,12 @@
         <button class="btn" type="submit">Create and send invite</button>
         <div class="hint" id="pf-msg"></div>
       </form>
-      <div class="card"><h2>Companies</h2><div class="tablewrap"><table id="pf-list"></table></div><div id="pf-pg"></div></div>
+      <div class="card platform-only"><h2>Companies</h2><div class="tablewrap"><table id="pf-list"></table></div><div id="pf-pg"></div></div>
     </div>
   </section>
 
   <!-- AUDIT -->
-  <section id="tab-audit" class="hidden">
+  <section id="tab-audit" class="hidden admin-only">
     <div class="card"><h2>Audit log</h2><div class="tablewrap"><table id="alist"></table></div><div id="alist-pg"></div></div>
   </section>
 
