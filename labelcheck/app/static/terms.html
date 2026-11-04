@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabelCheck terms of use</title><link rel="stylesheet" href="/app.css">
+<script>
+  (function() {
+    try {
+      const saved = localStorage.getItem("labelcheck_theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const theme = (saved === "light" || saved === "dark") ? saved : (prefersDark ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    } catch (_) {}
+  })();
+</script></head>
+<body><main style="max-width:780px">
+<div class="card">
+<h1>Label<span>Check</span>: terms of use and disclaimer</h1>
+<p class="hint">Template for the pilot. Have it reviewed by your lawyer before commercial use.</p>
+<h2>1. What the service does</h2>
+<p>LabelCheck reads label images, PDF artwork and e-commerce listings, and compares the text it reads with
+selected labelling rules (Legal Metrology (Packaged Commodities) Rules, 2011 as amended, and for food, the
+FSSAI Labelling and Display Regulations, 2020). The rule set version is shown on every result and report.</p>
+<h2>2. Not legal advice, no certificate</h2>
+<p>Results are produced automatically and can be wrong: text can be misread or missed, measurements are
+approximate, and some rules need human judgement. A result of "no issues found" does <b>not</b> mean a label
+complies with the law. LabelCheck does not certify compliance and is not a substitute for a qualified
+person or for advice from a lawyer or the Legal Metrology / FSSAI authorities.</p>
+<h2>3. Your responsibility</h2>
+<p>You remain fully responsible for your labels and listings. A qualified person in your organisation must
+review every result before a label is printed or a product is listed. Approvals recorded in LabelCheck are
+your organisation's decisions.</p>
+<h2>4. Rule coverage</h2>
+<p>Only the rules listed in the rule set are checked. Laws change; there may be a delay before changes are
+added. Rules that are not yet verified are shown as advisory and never as a hard failure.</p>
+<h2>5. Your data</h2>
+<p>Uploaded files, results and comments belong to your organisation and are visible only to its users.
+Every action is recorded in an audit log. We do not use your files to train models without written
+permission. Data is stored in the deployment region chosen by your organisation; backups are kept
+as configured by the operator.</p>
+<h2>6. E-commerce listings</h2>
+<p>When you provide listing text, LabelCheck checks the declarations in that text against the label.
+LabelCheck does not perform automated scraping of third-party marketplace websites.</p>
+<h2>7. Limitation of liability</h2>
+<p>To the extent permitted by law, the provider is not liable for losses arising from reliance on results,
+including penalties, recalls or reprinting costs. (Exact wording to be set in the commercial agreement.)</p>
+<p><a href="/">Back to LabelCheck</a></p>
+</div></main></body></html>

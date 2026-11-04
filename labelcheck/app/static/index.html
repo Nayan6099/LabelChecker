@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabelCheck</title>
+<link rel="stylesheet" href="/app.css">
+<script>
+  (function() {
+    try {
+      const saved = localStorage.getItem("labelcheck_theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const theme = (saved === "light" || saved === "dark") ? saved : (prefersDark ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    } catch (_) {}
+  })();
+</script>
+</head>
+<body>
+
+<button id="theme-toggle-auth" class="theme-toggle theme-floating" type="button" title="Switch Day / Night mode" aria-label="Toggle Day / Night mode">
+  <span class="theme-icon">🌙</span> <span class="theme-label">Night</span>
+</button>
+
+<!-- LANDING PAGE -->
+<section id="landing-view" class="hidden">
+  <header class="landing-header">
+    <div class="landing-brand">
+      <a href="#/" class="logo-link"><h1>Label<span>Check</span></h1></a>
+      <span class="badge">Compliance Platform</span>
+    </div>
+    <nav class="landing-nav">
+      <a href="#about-sec">About</a>
+      <a href="#features-sec">Features</a>
+      <a href="#pricing-sec">Pricing</a>
+      <a href="/api/docs" target="_blank" rel="noopener">API Docs</a>
+    </nav>
+    <div class="landing-actions">
+      <button class="theme-toggle" type="button" title="Switch Day / Night mode" aria-label="Toggle Day / Night mode">
+        <span class="theme-icon">🌙</span> <span class="theme-label">Night</span>
+      </button>
+      <a href="#/login" class="sbtn landing-btn-login">Log in</a>
+      <a href="#/signup" class="btn landing-btn-cta">Start Free Trial</a>
+    </div>
+  </header>
+
+  <main class="landing-content">
+    <!-- HERO -->
+    <section class="hero-section">
+      <div class="hero-badge">⚡ Legal Metrology (PCR 2011) &amp; FSSAI 2026 Compliant</div>
+      <h1 class="hero-title">Automated Label Compliance for Indian Consumer Products</h1>
+      <p class="hero-subtitle">
+        Eliminate legal scrutiny and packaging recalls. LabelCheck inspects product artwork, packaging photos, and e-commerce listings against 35+ mandatory statutory rules in seconds with multi-lingual OCR.
+      </p>
+      <div class="hero-ctas">
+        <a href="#/signup" class="btn hero-btn-main">Start Free Trial →</a>
+        <a href="#pricing-sec" class="sbtn hero-btn-sub">View Pricing &amp; Plans</a>
+      </div>
+      <div class="hero-metrics">
+        <div class="h-metric"><b>35+</b><span>Statutory Checks</span></div>
+        <div class="h-metric"><b>Table-I</b><span>Font Height Engine</span></div>
+        <div class="h-metric"><b>FSSAI 2020</b><span>Food &amp; Veg Logo Rules</span></div>
+        <div class="h-metric"><b>100%</b><span>Audit-Trail Protected</span></div>
+      </div>
+    </section>
+
+    <!-- ABOUT SECTION -->
+    <section id="about-sec" class="landing-section">
+      <div class="section-badge">Why Automated Compliance?</div>
+      <h2 class="section-title">Navigate Complex Packaging Regulations Without Risk</h2>
+      <p class="section-desc">
+        Under the Legal Metrology Act and Food Safety and Standards Regulations, even a 0.5 mm error in numeral height or a missing consumer complaint email can halt shipments and lead to heavy financial penalties.
+      </p>
+
+      <div class="about-grid">
+        <div class="card about-card">
+          <div class="card-icon">⚖️</div>
+          <h3>Legal Metrology (PCR) 2011</h3>
+          <p>
+            Validates complete manufacturer/packer/importer declarations, PIN codes (Rule 10), Unit Sale Price formatting (Rule 6(11)), non-exaggerating net quantity words (Rule 12(6)), and principal display panel font sizes (Rule 7(2) Table-I).
+          </p>
+        </div>
+        <div class="card about-card">
+          <div class="card-icon">🥗</div>
+          <h3>FSSAI Regulations 2020 (v8)</h3>
+          <p>
+            Deep checks for food products: 14-digit FoSCoS licence format, mandatory Veg/Non-Veg symbol geometry and placement, %RDA nutritional tables, allergen callouts, and lot/batch code declarations.
+          </p>
+        </div>
+        <div class="card about-card">
+          <div class="card-icon">🛒</div>
+          <h3>E-Commerce Rule 6(10)</h3>
+          <p>
+            Cross-references e-commerce marketplace listings against physical label text to guarantee identical consumer declarations across retail shelves and online catalogs.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURES & WORKFLOW -->
+    <section id="features-sec" class="landing-section">
+      <div class="section-badge">How It Works</div>
+      <h2 class="section-title">Built for Packaging, QA, and Regulatory Teams</h2>
+      <p class="section-desc">From initial artwork proofing to factory batches and marketplace listings.</p>
+
+      <div class="workflow-steps">
+        <div class="card step-card">
+          <div class="step-num">01</div>
+          <h3>Upload Artwork or Photo</h3>
+          <p>Drag and drop vector PDF artwork, packaging flats, or phone photos. Auto-perspective correction automatically straightens tilted photos.</p>
+        </div>
+        <div class="card step-card">
+          <div class="step-num">02</div>
+          <h3>High-Precision OCR</h3>
+          <p>Extracts English, Hindi (Devanagari), nutritional panels, MRP, and dates. Detects character dimensions directly from PDF vector dimensions or DPI calculations.</p>
+        </div>
+        <div class="card step-card">
+          <div class="step-num">03</div>
+          <h3>35+ Rule Verification</h3>
+          <p>Immediate automated audit with pinpointed visual bounding boxes on your artwork. Displays exact statutory citations for every discrepancy.</p>
+        </div>
+        <div class="card step-card">
+          <div class="step-num">04</div>
+          <h3>Review &amp; Audit Defense</h3>
+          <p>Collaborative 4-eyes review approval flow, reviewer annotations, and downloadable tamper-evident PDF compliance audit certificates.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- PRICING SECTION -->
+    <section id="pricing-sec" class="landing-section">
+      <div class="section-badge">Transparent Pricing</div>
+      <h2 class="section-title">Plans that Scale with Your Catalog</h2>
+      <p class="section-desc">Choose between flexible Pay-Per-Search packs or high-volume Monthly Subscriptions.</p>
+
+      <!-- Pricing Billing Switcher -->
+      <div class="pricing-switcher">
+        <button type="button" id="btn-show-monthly" class="sbtn switch-btn active">Monthly Subscription</button>
+        <button type="button" id="btn-show-payg" class="sbtn switch-btn">Pay-Per-Search (On-Demand)</button>
+      </div>
+
+      <!-- MONTHLY PLANS -->
+      <div id="pricing-monthly" class="pricing-grid">
+        <div class="card price-card">
+          <div class="price-tier">Trial Plan</div>
+          <div class="price-val">₹0 <span class="price-cycle">/ month</span></div>
+          <p class="price-note">Perfect for testing compliance on your first labels.</p>
+          <ul class="price-features">
+            <li>✓ <b>100 scans</b> per month</li>
+            <li>✓ Up to <b>3 users</b></li>
+            <li>✓ Legal Metrology &amp; FSSAI rule engine</li>
+            <li>✓ PDF compliance certificates</li>
+            <li>✓ Standard email support</li>
+          </ul>
+          <a href="#/signup?plan=trial" class="sbtn price-btn">Start Free Trial</a>
+        </div>
+
+        <div class="card price-card featured">
+          <div class="popular-ribbon">Most Popular</div>
+          <div class="price-tier">Standard Plan</div>
+          <div class="price-val">₹4,999 <span class="price-cycle">/ month</span></div>
+          <p class="price-note">For growing brands and regular packaging runs.</p>
+          <ul class="price-features">
+            <li>✓ <b>2,000 scans</b> per month</li>
+            <li>✓ Up to <b>10 users</b> (Uploaders &amp; Reviewers)</li>
+            <li>✓ Bulk batch uploads (up to 200 files)</li>
+            <li>✓ E-commerce listing verification</li>
+            <li>✓ Email review alerts &amp; notifications</li>
+            <li>✓ Complete ZIP audit data export</li>
+          </ul>
+          <a href="#/signup?plan=standard" class="btn price-btn">Get Started with Standard</a>
+        </div>
+
+        <div class="card price-card">
+          <div class="price-tier">Business Plan</div>
+          <div class="price-val">₹14,999 <span class="price-cycle">/ month</span></div>
+          <p class="price-note">For enterprise FMCG, retail chains, and co-packers.</p>
+          <ul class="price-features">
+            <li>✓ <b>10,000 scans</b> per month</li>
+            <li>✓ Up to <b>50 users</b></li>
+            <li>✓ Strict 4-eyes reviewer approval gate</li>
+            <li>✓ REST API access &amp; signed Webhooks</li>
+            <li>✓ Priority multi-worker processing queue</li>
+            <li>✓ Dedicated account manager</li>
+          </ul>
+          <a href="#/signup?plan=business" class="btn price-btn">Get Started with Business</a>
+        </div>
+      </div>
+
+      <!-- PAY PER SEARCH (ON-DEMAND) -->
+      <div id="pricing-payg" class="pricing-grid hidden">
+        <div class="card price-card">
+          <div class="price-tier">Single Scan</div>
+          <div class="price-val">₹99 <span class="price-cycle">/ scan</span></div>
+          <p class="price-note">Check a single artwork proof on-demand. No subscription.</p>
+          <ul class="price-features">
+            <li>✓ <b>1 scan credit</b></li>
+            <li>✓ Full Legal Metrology &amp; FSSAI checks</li>
+            <li>✓ Downloadable PDF Audit Certificate</li>
+            <li>✓ 30-day cloud access history</li>
+            <li>✓ No recurring charge or lock-in</li>
+          </ul>
+          <a href="#/signup?plan=trial" class="sbtn price-btn">Buy Single Scan</a>
+        </div>
+
+        <div class="card price-card featured">
+          <div class="popular-ribbon">Best Value</div>
+          <div class="price-tier">Batch Pack (50)</div>
+          <div class="price-val">₹3,999 <span class="price-cycle">/ pack</span></div>
+          <p class="price-note">₹80 per scan. Ideal for new product launches.</p>
+          <ul class="price-features">
+            <li>✓ <b>50 scan credits</b></li>
+            <li>✓ Credits never expire</li>
+            <li>✓ Bulk CSV / ZIP batch processing</li>
+            <li>✓ Multi-user reviewer dashboard</li>
+            <li>✓ E-commerce listing check</li>
+            <li>✓ Priority email support</li>
+          </ul>
+          <a href="#/signup?plan=trial" class="btn price-btn">Buy 50 Scans Pack</a>
+        </div>
+
+        <div class="card price-card">
+          <div class="price-tier">Agency Pack (250)</div>
+          <div class="price-val">₹14,999 <span class="price-cycle">/ pack</span></div>
+          <p class="price-note">₹60 per scan. For design studios &amp; compliance consultants.</p>
+          <ul class="price-features">
+            <li>✓ <b>250 scan credits</b></li>
+            <li>✓ Credits never expire</li>
+            <li>✓ Up to 20 team accounts</li>
+            <li>✓ Bulk batch export with all PDF certificates</li>
+            <li>✓ API integration token included</li>
+            <li>✓ Phone &amp; WhatsApp support</li>
+          </ul>
+          <a href="#/signup?plan=trial" class="btn price-btn">Buy 250 Scans Pack</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="landing-footer">
+      <div class="footer-content">
+        <div class="footer-brand">
+          <h2>Label<span>Check</span></h2>
+          <p class="hint">Assistive compliance automation for Legal Metrology (PCR 2011) &amp; FSSAI Regulations 2020.</p>
+        </div>
+        <div class="footer-links">
+          <a href="#about-sec">About</a>
+          <a href="#features-sec">Features</a>
+          <a href="#pricing-sec">Pricing</a>
+          <a href="/terms.html" target="_blank" rel="noopener">Terms of Use</a>
+          <a href="/privacy.html" target="_blank" rel="noopener">Privacy Notice</a>
+          <a href="/api/docs" target="_blank" rel="noopener">API Docs</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p class="hint">© 2026 LabelCheck. Assistive software only — not a substitute for qualified legal review before printing.</p>
+      </div>
+    </footer>
+  </main>
+</section>
+
+<!-- LOGIN -->
+<section id="login-view" class="center hidden">
+  <form class="card login" id="login-form">
+    <h1>Label<span>Check</span></h1>
+    <p class="hint">Label and listing compliance checker</p>
+    <label for="l-email">Email</label>
+    <input type="email" id="l-email" autocomplete="username" required>
+    <label for="l-pass">Password</label>
+    <input type="password" id="l-pass" autocomplete="current-password" required>
+    <div id="l-totp-wrap" class="hidden">
+      <label for="l-totp">6-digit code from your authenticator app</label>
+      <input type="text" id="l-totp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}">
+    </div>
+    <button class="btn" type="submit">Log in</button>
+    <div class="hint err" id="l-msg"></div>
+    <p class="hint">Don't have an account? <a href="#/signup">Sign up</a> · <a href="#/">← Back to home</a></p>
+    <p class="hint"><a href="#/forgot" id="forgot-link">Forgot password?</a> ·
+      <a href="/terms.html" target="_blank" rel="noopener">Terms of use</a> ·
+      <a href="/privacy.html" target="_blank" rel="noopener">Privacy</a></p>
+  </form>
+</section>
+
+<!-- SIGN UP -->
+<section id="signup-view" class="center hidden">
+  <form class="card login" id="signup-form">
+    <h1>Label<span>Check</span></h1>
+    <p class="hint">Start your free compliance trial</p>
+    <label for="su-cname">Company / Organization name</label>
+    <input type="text" id="su-cname" placeholder="e.g. Acme Foods Pvt Ltd" required maxlength="200">
+    <label for="su-name">Your full name</label>
+    <input type="text" id="su-name" placeholder="e.g. Nayan Mishra" required maxlength="200">
+    <label for="su-email">Work email</label>
+    <input type="email" id="su-email" placeholder="name@company.com" required maxlength="254">
+    <label for="su-pass">Password</label>
+    <input type="password" id="su-pass" autocomplete="new-password" required minlength="10">
+    <div class="hint">At least 10 characters, one capital letter, one number.</div>
+    <label for="su-plan">Select Plan</label>
+    <select id="su-plan">
+      <option value="trial">Trial (100 free scans / mo, 3 users)</option>
+      <option value="standard">Standard (2,000 scans / mo, 10 users)</option>
+      <option value="business">Business (10,000 scans / mo, 50 users)</option>
+    </select>
+    <button class="btn" type="submit" id="su-btn">Create account &amp; start scanning</button>
+    <div class="hint err" id="su-msg"></div>
+    <p class="hint">By signing up, you agree to our <a href="/terms.html" target="_blank" rel="noopener">Terms</a> and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Notice</a>.</p>
+    <p class="hint">Already have an account? <a href="#/login">Log in</a> · <a href="#/">← Back to home</a></p>
+  </form>
+</section>
+
+<!-- FORGOT / RESET / INVITE -->
+<section id="forgot-view" class="center hidden">
+  <form class="card login" id="forgot-form">
+    <h2>Reset your password</h2>
+    <p class="hint">Enter your e-mail. If it belongs to an account, we send a link that works for 1 hour.</p>
+    <label for="f-email">Email</label><input type="email" id="f-email" required autocomplete="username">
+    <button class="btn" type="submit">Send reset link</button>
+    <div class="hint" id="f-msg"></div>
+    <p class="hint"><a href="#/">Back to log in</a></p>
+  </form>
+</section>
+<section id="setpw-view" class="center hidden">
+  <form class="card login" id="setpw-form">
+    <h2 id="setpw-title">Choose a new password</h2>
+    <p class="hint" id="setpw-info"></p>
+    <label for="s-pass">New password</label><input type="password" id="s-pass" required autocomplete="new-password">
+    <label for="s-pass2">Repeat it</label><input type="password" id="s-pass2" required autocomplete="new-password">
+    <div class="hint">At least 10 characters, one capital letter, one number.</div>
+    <button class="btn" type="submit" id="setpw-btn">Save password</button>
+    <div class="hint err" id="s-msg"></div>
+    <p class="hint"><a href="#/">Back to log in</a></p>
+  </form>
+</section>
+
+<!-- TERMS GATE -->
+<section id="terms-view" class="center hidden">
+  <div class="card login">
+    <h2>Before you start</h2>
+    <p>LabelCheck is an <b>assistive tool</b>. Its findings are not legal advice and do not certify
+      that a label complies with the law. A qualified person must review every result before a label
+      is printed or a product is listed.</p>
+    <p class="hint">Read the full <a href="/terms.html" target="_blank" rel="noopener">terms of use</a>.</p>
+    <button class="btn" id="terms-ok">I understand and agree</button>
+  </div>
+</section>
+
+<div id="app-view" class="hidden">
+<header>
+  <h1>Label<span>Check</span></h1>
+  <span class="badge" id="ruleset">Rule set</span>
+  <nav id="nav">
+    <button data-tab="scan" class="on">Scan</button>
+    <button data-tab="batch">Bulk upload</button>
+    <button data-tab="review" class="reviewer-only">Review queue <span class="count" id="rq-count"></span></button>
+    <button data-tab="history">History</button>
+    <button data-tab="dash">Dashboard</button>
+    <button data-tab="users" class="admin-only">Company</button>
+    <button data-tab="audit" class="admin-only">Audit log</button>
+    <button data-tab="platform" class="platform-only hidden">Platform</button>
+    <button data-tab="account" id="me-btn">Account</button>
+  </nav>
+  <button id="theme-toggle" class="theme-toggle" type="button" title="Switch Day / Night mode" aria-label="Toggle Day / Night mode">
+    <span class="theme-icon">🌙</span> <span class="theme-label">Night</span>
+  </button>
+</header>
+
+<main>
+  <!-- SCAN -->
+  <section id="tab-scan">
+    <div class="grid">
+      <form class="card" id="form">
+        <h2>New scan</h2>
+        <div class="drop" id="drop" tabindex="0">Click or drop a label: JPG, PNG or PDF artwork</div>
+        <input type="file" id="file" accept="image/*,application/pdf" class="hidden">
+        <label for="product">Common or generic name of product</label>
+        <input type="text" id="product" placeholder="e.g. Roasted Peanuts" maxlength="200">
+        <label for="sku">SKU / product code <span class="opt">(links versions of the same label)</span></label>
+        <input type="text" id="sku" placeholder="e.g. PNT-500" maxlength="100">
+        <label for="category">Category</label>
+        <select id="category"></select>
+        <label>Principal display panel size (mm)</label>
+        <div class="row2">
+          <input type="number" id="pw" placeholder="Width" min="1" step="0.1">
+          <input type="number" id="ph" placeholder="Height" min="1" step="0.1">
+        </div>
+        <div class="hint">For PDF artwork, leave empty to use the page size. For photos, one value is enough if the
+          image shows exactly the panel.</div>
+        <div class="check"><input type="checkbox" id="straighten" checked> <span>Auto-straighten photo (find panel edges, fix tilt)</span></div>
+        <div class="check"><input type="checkbox" id="embossed"> <span>Text is blown, moulded, embossed or perforated</span></div>
+        <div class="check"><input type="checkbox" id="imported"> <span>Imported product</span></div>
+        <details class="sub"><summary>E-commerce listing (optional)</summary>
+          <label for="listing">E-commerce listing text</label>
+          <textarea id="listing" placeholder="Paste product title, price, net quantity, seller, country of origin..."></textarea>
+          <div class="hint">Check that the listing displays mandatory declarations and matches the label (Rule 6(10)).</div>
+        </details>
+        <button class="btn" id="go" type="submit">Check label</button>
+        <div class="hint" id="status"></div>
+      </form>
+      <div class="card" id="out"><div class="empty">Upload a label to see the findings here.</div></div>
+    </div>
+  </section>
+
+  <!-- BATCH -->
+  <section id="tab-batch" class="hidden">
+    <div class="grid">
+      <form class="card" id="bform">
+        <h2>Bulk upload</h2>
+        <div class="drop" id="bdrop" tabindex="0">Click or drop many labels (JPG, PNG, PDF). Up to 200.</div>
+        <input type="file" id="bfiles" accept="image/*,application/pdf" multiple class="hidden">
+        <label for="manifest">Details per file (CSV, optional)</label>
+        <input type="file" id="manifest" accept=".csv,text/csv">
+        <div class="hint"><a href="/api/batches/template.csv" id="tpl">Download the CSV template</a>. Rows are matched by
+          file name. Files not in the CSV use the defaults below; without a product name, the generic-name check (6(1)(b)) is left for a person.</div>
+        <label for="bname">Batch name</label>
+        <input type="text" id="bname" placeholder="e.g. Diwali packs Oct" maxlength="200">
+        <label for="bcat">Default category</label>
+        <select id="bcat"></select>
+        <label>Default panel size (mm)</label>
+        <div class="row2">
+          <input type="number" id="bpw" placeholder="Width" min="1" step="0.1">
+          <input type="number" id="bph" placeholder="Height" min="1" step="0.1">
+        </div>
+        <div class="check"><input type="checkbox" id="bstraighten"> <span>Auto-straighten photos</span></div>
+        <button class="btn" id="bgo" type="submit">Start batch</button>
+        <div class="hint" id="bstatus"></div>
+      </form>
+      <div class="card">
+        <h2>Batches</h2>
+        <div id="batches"></div>
+        <div id="bdetail"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REVIEW QUEUE -->
+  <section id="tab-review" class="hidden">
+    <div class="card">
+      <h2>Labels waiting for review</h2>
+      <div class="tablewrap"><table id="rq"></table></div>
+      <div id="rq-pg"></div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section id="tab-history" class="hidden">
+    <div class="card">
+      <h2>Scan repository</h2>
+      <div class="row2">
+        <input type="text" id="q" placeholder="Search product, SKU or file name">
+        <select id="qrs">
+          <option value="">All review states</option>
+          <option value="not_submitted">Not submitted</option>
+          <option value="in_review">In review</option>
+          <option value="changes_requested">Changes requested</option>
+          <option value="approved">Approved</option>
+        </select>
+      </div>
+      <div class="tablewrap"><table id="hist"></table></div>
+      <div id="hist-pg"></div>
+    </div>
+  </section>
+
+  <!-- DASHBOARD -->
+  <section id="tab-dash" class="hidden">
+    <div class="kpis" id="kpis"></div>
+    <div class="card">
+      <h2>Most frequent failures</h2>
+      <div id="bars"></div>
+    </div>
+  </section>
+
+  <!-- COMPANY (admin) -->
+  <section id="tab-users" class="hidden">
+    <div class="kpis" id="org-kpis"></div>
+    <div class="grid">
+      <div>
+        <form class="card" id="uform">
+          <h2>Invite a user</h2>
+          <label for="u-name">Name</label><input type="text" id="u-name" required maxlength="200">
+          <label for="u-email">Email</label><input type="email" id="u-email" required>
+          <label for="u-role">Role</label>
+          <select id="u-role">
+            <option value="uploader">Uploader: uploads labels, comments, submits for review</option>
+            <option value="reviewer">Reviewer: also decides findings and approves</option>
+            <option value="admin">Admin: also manages users, settings and API keys</option>
+          </select>
+          <div class="hint">They get an e-mail link (valid 72 hours) to choose their own password.</div>
+          <button class="btn" type="submit">Send invite</button>
+          <div class="hint" id="umsg"></div>
+        </form>
+        <form class="card" id="oform" style="margin-top:20px">
+          <h2>Company settings</h2>
+          <label for="o-name">Company name</label><input type="text" id="o-name" maxlength="200">
+          <label for="o-ret">Delete scans older than (days)</label>
+          <input type="number" id="o-ret" min="0" max="3650" placeholder="Empty or 0 = keep forever">
+          <div class="check"><input type="checkbox" id="o-2fa"> <span>Everyone must use two-step login (2FA)</span></div>
+          <button class="btn" type="submit">Save settings</button>
+          <div class="hint" id="omsg"></div>
+          <h2 style="margin-top:22px">Email notifications</h2>
+          <div id="email-status-box" class="hint">Checking email status...</div>
+          <div style="margin-top:8px;">
+            <button class="sbtn" id="send-test-email" type="button">Send test email</button>
+            <span class="hint" id="test-email-msg" style="margin-left:8px;"></span>
+          </div>
+          <h2 style="margin-top:22px">Export all data</h2>
+          <div class="hint">A ZIP with every scan, result, review, comment, user and audit entry (JSON).</div>
+          <div class="actions"><a href="/api/org/export" id="exp1">Export data</a><a href="/api/org/export?files=true" id="exp2">Export with original files</a></div>
+        </form>
+      </div>
+      <div>
+        <div class="card"><h2>Users</h2><div class="tablewrap"><table id="ulist"></table></div><div id="ulist-pg"></div></div>
+        <div class="card" style="margin-top:20px">
+          <h2>API keys</h2>
+          <div class="hint">For connecting your ERP, PLM or e-commerce system. Keys act as an uploader: they can upload
+            and read scans, never review or approve. <a href="/api/docs" target="_blank" rel="noopener">API documentation</a></div>
+          <form class="decide" id="kform">
+            <input type="text" id="k-name" placeholder="Key name, e.g. SAP integration" maxlength="100" required>
+            <select id="k-scope" style="width:auto"><option value="rw">Read + write</option><option value="r">Read only</option></select>
+            <button class="sbtn primary" type="submit">Create key</button>
+          </form>
+          <div id="k-new"></div>
+          <div class="tablewrap"><table id="klist"></table></div>
+          <div id="klist-pg"></div>
+        </div>
+        <div class="card" style="margin-top:20px">
+          <h2>Webhooks</h2>
+          <div class="hint">LabelCheck calls your system's URL when something happens, so it does not have to keep
+            asking. Each call is signed with HMAC-SHA256 (header <code>X-LabelCheck-Signature</code>); failed calls
+            are retried for about 21 hours.</div>
+          <form id="whform">
+            <label for="wh-url">Your endpoint URL</label>
+            <input type="url" id="wh-url" placeholder="https://erp.example.com/labelcheck/events" maxlength="2000" required>
+            <label>Send these events</label>
+            <div id="wh-events"></div>
+            <label for="wh-desc">Description <span class="opt">(optional)</span></label>
+            <input type="text" id="wh-desc" placeholder="e.g. SAP label status" maxlength="200">
+            <button class="sbtn primary" type="submit" style="margin-top:10px">Add webhook</button>
+          </form>
+          <div id="wh-new"></div>
+          <div class="tablewrap"><table id="whlist"></table></div>
+          <div id="wh-deliveries"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PLATFORM (operator) -->
+  <section id="tab-platform" class="hidden">
+    <div class="grid">
+      <form class="card" id="pf-form">
+        <h2>New customer company</h2>
+        <label for="pf-name">Company name</label><input type="text" id="pf-name" required maxlength="200">
+        <label for="pf-plan">Plan</label><select id="pf-plan"></select>
+        <label for="pf-aname">First admin's name</label><input type="text" id="pf-aname" required maxlength="200">
+        <label for="pf-aemail">First admin's e-mail</label><input type="email" id="pf-aemail" required>
+        <button class="btn" type="submit">Create and send invite</button>
+        <div class="hint" id="pf-msg"></div>
+      </form>
+      <div class="card"><h2>Companies</h2><div class="tablewrap"><table id="pf-list"></table></div><div id="pf-pg"></div></div>
+    </div>
+  </section>
+
+  <!-- AUDIT -->
+  <section id="tab-audit" class="hidden">
+    <div class="card"><h2>Audit log</h2><div class="tablewrap"><table id="alist"></table></div><div id="alist-pg"></div></div>
+  </section>
+
+  <!-- ACCOUNT -->
+  <section id="tab-account" class="hidden">
+    <div class="grid">
+      <div>
+        <div class="card">
+          <h2>Account</h2>
+          <div id="me-info"></div>
+          <div class="check"><input type="checkbox" id="notify"> <span>E-mail me about reviews and finished batches</span></div>
+          <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--line);">
+            <label style="margin-top:0;">Day / Night mode</label>
+            <div style="display:flex; gap:8px; margin-top:6px;">
+              <button type="button" class="sbtn theme-pref-btn" data-set-theme="system">Auto</button>
+              <button type="button" class="sbtn theme-pref-btn" data-set-theme="light">☀️ Day</button>
+              <button type="button" class="sbtn theme-pref-btn" data-set-theme="dark">🌙 Night</button>
+            </div>
+          </div>
+          <button class="btn ghost" id="logout">Log out</button>
+        </div>
+        <div class="card" style="margin-top:20px" id="tfa-card">
+          <h2>Two-step login (2FA)</h2>
+          <div id="tfa-body"></div>
+        </div>
+      </div>
+      <form class="card" id="pform">
+        <h2>Change password</h2>
+        <label for="p-cur">Current password</label><input type="password" id="p-cur" required autocomplete="current-password">
+        <label for="p-new">New password</label><input type="password" id="p-new" required autocomplete="new-password">
+        <button class="btn" type="submit">Change password</button>
+        <div class="hint" id="pmsg"></div>
+      </form>
+    </div>
+  </section>
+</main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

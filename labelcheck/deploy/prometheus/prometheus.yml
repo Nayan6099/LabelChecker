@@ -1,0 +1,16 @@
+# Example Prometheus config for the docker-compose stack. Add a `prometheus` service on the same
+# network, or point your existing Prometheus / Grafana Agent / CloudWatch agent at these targets.
+global:
+  scrape_interval: 30s
+rule_files:
+  - /etc/prometheus/alerts.yml
+scrape_configs:
+  - job_name: labelcheck-web
+    metrics_path: /metrics
+    authorization:
+      credentials_file: /etc/prometheus/labelcheck_metrics_token   # = LABELCHECK_METRICS_TOKEN
+    static_configs:
+      - targets: ["web:8000"]
+  - job_name: labelcheck-worker
+    static_configs:
+      - targets: ["worker:9101"]          # one target per worker container when scaled

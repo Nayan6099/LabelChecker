@@ -1,0 +1,69 @@
+# Alert rules for LabelCheck. Thresholds are starting points; tune after a week of real traffic.
+groups:
+  - name: labelcheck
+    rules:
+      - alert: LabelCheckDown
+        expr: up{job=~"labelcheck-.*"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.job }} target {{ $labels.instance }} is down"
+
+      - alert: LabelCheckHighErrorRate
+        expr: |
+          sum(rate(labelcheck_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(labelcheck_http_requests_total[5m])), 1e-9) > 0.02
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 2% of API requests fail with 5xx"
+
+      - alert: LabelCheckSlowApi
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(labelcheck_http_request_seconds_bucket{route!~"/api/scans|/api/batches"}[5m]))) > 1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "95th percentile API time above 1 s (uploads excluded)"
+
+      - alert: LabelCheckQueueBacklog
+        expr: max(labelcheck_queue{status="queued"}) > 200
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 200 labels waiting: add workers (docker compose up -d --scale worker=N)"
+
+      - alert: LabelCheckWorkersIdleWithBacklog
+        expr: max(labelcheck_queue{status="queued"}) > 0 and sum(rate(labelcheck_scans_total[10m])) == 0
+        for: 10m
+        labels: {severity: critical}
+        annotations:
+          summary: "Labels are queued but no worker has finished a scan for 10 minutes"
+
+      - alert: LabelCheckScanErrors
+        expr: sum(rate(labelcheck_scans_total{status="error"}[30m])) / clamp_min(sum(rate(labelcheck_scans_total[30m])), 1e-9) > 0.05
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 5% of scans end in an internal processing error (see worker logs)"
+
+      - alert: LabelCheckSlowScans
+        expr: histogram_quantile(0.95, sum by (le) (rate(labelcheck_scan_seconds_bucket[30m]))) > 20
+        for: 30m
+        labels: {severity: warning}
+        annotations:
+          summary: "95th percentile OCR time per label above 20 s (CPU starved?)"
+
+      - alert: LabelCheckLoginFailures
+        expr: sum(rate(labelcheck_logins_total{result!="ok"}[10m])) * 600 > 100
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "More than 100 failed logins in 10 minutes (password guessing?)"
+
+      - alert: LabelCheckWebhookFailures
+        expr: sum(rate(labelcheck_webhook_deliveries_total{result="failed"}[1h])) > 0
+        for: 1h
+        labels: {severity: info}
+        annotations:
+          summary: "Webhook deliveries are failing for good (a customer endpoint is down)"

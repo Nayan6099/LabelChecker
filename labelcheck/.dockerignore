@@ -1,0 +1,12 @@
+.git
+data/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.env
+*.zip
+test-pack/
+tests/
+samples/
+docs/
+node_modules/

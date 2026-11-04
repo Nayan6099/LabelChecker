@@ -1,0 +1,70 @@
+# Production-style stack on one server: Caddy (HTTPS) -> web -> PostgreSQL; workers do the OCR.
+# 1. cp .env.example .env and fill it in   2. docker compose up -d --build
+# Scale OCR:  docker compose up -d --scale worker=3
+x-app: &app
+  build: .
+  image: labelcheck:0.4
+  restart: unless-stopped
+  env_file: .env
+  environment:
+    LABELCHECK_ENV: production
+    DATABASE_URL: postgresql+psycopg://labelcheck:${POSTGRES_PASSWORD}@db:5432/labelcheck
+    LABELCHECK_TRUST_PROXY: "1"
+  volumes:
+    - labelcheck-data:/data      # uploads + checked images (not needed with LABELCHECK_STORAGE=s3)
+  depends_on:
+    db: {condition: service_healthy}
+
+services:
+  caddy:
+    image: caddy:2.10
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data            # TLS certificates (Let's Encrypt)
+    depends_on: [web]
+    restart: unless-stopped
+
+  web:
+    <<: *app
+    environment:
+      LABELCHECK_ENV: production
+      DATABASE_URL: postgresql+psycopg://labelcheck:${POSTGRES_PASSWORD}@db:5432/labelcheck
+      LABELCHECK_TRUST_PROXY: "1"
+      LABELCHECK_WORKERS: "0"        # no OCR in the web container; the worker service does it
+    expose: ["8000"]                 # only reachable through Caddy
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.worker"]
+    environment:
+      LABELCHECK_ENV: production
+      DATABASE_URL: postgresql+psycopg://labelcheck:${POSTGRES_PASSWORD}@db:5432/labelcheck
+      LABELCHECK_WORKERS: ${LABELCHECK_WORKERS:-2}
+      LABELCHECK_WORKER_METRICS_PORT: "9101"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9101/metrics >/dev/null || exit 1"]
+      interval: 30s
+      retries: 3
+    stop_grace_period: 90s          # let a scan in progress finish
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: labelcheck
+      POSTGRES_USER: labelcheck
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labelcheck -d labelcheck"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  labelcheck-data:
+  pg-data:

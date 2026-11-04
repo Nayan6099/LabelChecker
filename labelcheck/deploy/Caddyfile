@@ -1,0 +1,16 @@
+# Caddy gets and renews a free Let's Encrypt certificate for DOMAIN automatically.
+{$DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 400MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	# Metrics are for Prometheus inside the network only
+	respond /metrics 404
+	reverse_proxy web:8000 {
+		header_up X-Request-ID {http.request.uuid}
+	}
+}

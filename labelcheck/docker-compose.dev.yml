@@ -1,0 +1,26 @@
+# Local single-container run (SQLite, OCR in the web process, plain http://localhost:8000). Not for the internet.
+services:
+  labelcheck:
+    build: .
+    image: labelcheck:0.4
+    restart: unless-stopped
+    ports: ["8000:8000"]
+    environment:
+      LABELCHECK_ENV: development
+      LABELCHECK_COOKIE_SECURE: "0"
+      LABELCHECK_PUBLIC_URL: http://localhost:8000
+      LABELCHECK_WORKERS: "2"
+      LABELCHECK_ORG_NAME: ${LABELCHECK_ORG_NAME:-Demo Company}
+      LABELCHECK_ADMIN_EMAIL: ${LABELCHECK_ADMIN_EMAIL:-admin@example.com}
+      LABELCHECK_ADMIN_PASSWORD: ${LABELCHECK_ADMIN_PASSWORD:?set LABELCHECK_ADMIN_PASSWORD}
+      # Outgoing email (SMTP)
+      LABELCHECK_SMTP_HOST: ${LABELCHECK_SMTP_HOST:-}
+      LABELCHECK_SMTP_PORT: ${LABELCHECK_SMTP_PORT:-587}
+      LABELCHECK_SMTP_USER: ${LABELCHECK_SMTP_USER:-}
+      LABELCHECK_SMTP_PASSWORD: ${LABELCHECK_SMTP_PASSWORD:-}
+      LABELCHECK_SMTP_TLS: ${LABELCHECK_SMTP_TLS:-starttls}
+      LABELCHECK_MAIL_FROM: ${LABELCHECK_MAIL_FROM:-LabelCheck <no-reply@localhost>}
+    volumes:
+      - labelcheck-dev-data:/data
+volumes:
+  labelcheck-dev-data:

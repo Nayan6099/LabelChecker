@@ -1,0 +1,116 @@
+# CI: lint, dependency audit, tests on SQLite and PostgreSQL, browser smoke tests on three engines,
+# Docker image build + start-up check. Runs on every push and pull request.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+
+jobs:
+  lint-audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ env.PYTHON_VERSION }}", cache: pip}
+      - run: pip install -r requirements-dev.txt
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Known vulnerabilities in dependencies (pip-audit)
+        run: pip-audit -r requirements.txt
+
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:17
+        env: {POSTGRES_USER: lc, POSTGRES_PASSWORD: lc, POSTGRES_DB: lc_test}
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U lc" --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ env.PYTHON_VERSION }}", cache: pip}
+      - name: OCR engine and fonts
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-hin fonts-dejavu-core fonts-freefont-ttf
+      - run: pip install -r requirements-dev.txt
+      - name: Tests
+        env:
+          TEST_DATABASE_URL: ${{ matrix.db == 'postgres' && 'postgresql+psycopg://lc:lc@localhost:5432/lc_test' || '' }}
+        run: pytest -q
+      - name: Accuracy on the synthetic test pack (must stay at 100%)
+        if: matrix.db == 'sqlite'
+        run: |
+          python tests/make_test_pack.py /tmp/pack
+          python -m tools.accuracy run /tmp/pack | tee /tmp/acc.txt
+          grep -q "FAIL precision 100%  recall 100%" /tmp/acc.txt
+
+  e2e:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      LABELCHECK_DATA: /tmp/lcdata
+      LABELCHECK_COOKIE_SECURE: "0"
+      LABELCHECK_PUBLIC_URL: http://localhost:8000
+      LABELCHECK_ADMIN_EMAIL: admin@example.com
+      LABELCHECK_ADMIN_PASSWORD: Admin-pass-2026
+      LABELCHECK_ALLOW_PRIVATE_FETCH: "1"      # test only: webhook test posts to a local receiver
+      LABELCHECK_WEBHOOK_POLL_SECONDS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ env.PYTHON_VERSION }}", cache: pip}
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-hin fonts-dejavu-core fonts-freefont-ttf
+      - run: pip install -r requirements.txt && python tests/make_samples.py
+      - run: npm install --no-save playwright@1.56.1 && npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Start server
+        run: |
+          nohup uvicorn app.main:app --port 8000 > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -fsS localhost:8000/api/health/ready && break; sleep 2; done
+      - name: Browser smoke test
+        run: BASE_URL=http://localhost:8000/ SERVER_LOG=server.log node tests/e2e/ui-smoke.js ${{ matrix.browser }}
+      - if: failure()
+        run: tail -100 server.log
+
+  docker:
+    runs-on: ubuntu-24.04
+    needs: [lint-audit, test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t labelcheck:ci .
+      - name: Image starts, migrates and reports ready
+        run: |
+          docker run -d --name lc -p 8000:8000 -e LABELCHECK_COOKIE_SECURE=0 labelcheck:ci
+          for i in $(seq 1 40); do curl -fsS localhost:8000/api/health/ready && exit 0; sleep 3; done
+          docker logs lc; exit 1
+      - name: Worker command starts
+        run: |
+          docker run -d --name lcw -e LABELCHECK_WORKER_METRICS_PORT=9101 -p 9101:9101 labelcheck:ci python -m app.worker
+          for i in $(seq 1 20); do curl -fsS localhost:9101/metrics >/dev/null && exit 0; sleep 3; done
+          docker logs lcw; exit 1
+      - name: Production mode refuses unsafe settings
+        run: |
+          if docker run --rm -e LABELCHECK_ENV=production labelcheck:ci python -m app.cli check-config; then exit 1; fi
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with: {image-ref: "labelcheck:ci", severity: "CRITICAL,HIGH", exit-code: "0", ignore-unfixed: true}

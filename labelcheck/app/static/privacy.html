@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LabelCheck privacy notice</title><link rel="stylesheet" href="/app.css">
+<script>
+  (function() {
+    try {
+      const saved = localStorage.getItem("labelcheck_theme");
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const theme = (saved === "light" || saved === "dark") ? saved : (prefersDark ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    } catch (_) {}
+  })();
+</script></head>
+<body><main style="max-width:780px">
+<div class="card">
+<h1>Label<span>Check</span>: privacy notice</h1>
+<p class="hint">Template for the pilot, written with India's Digital Personal Data Protection Act, 2023 in mind.
+Have it reviewed by your lawyer and fill in the [brackets] before commercial use.</p>
+<h2>Who we are</h2>
+<p>[Company legal name, address], operator of LabelCheck. Contact for privacy questions and grievances:
+[name, e-mail, phone]. </p>
+<h2>What personal data we process</h2>
+<ul>
+<li><b>Account data:</b> name, work e-mail, role, company, password (stored only as a one-way hash), two-step
+login secret (encrypted), login times.</li>
+<li><b>Activity data:</b> the audit log of actions in the service (uploads, review decisions, logins) with the
+IP address used.</li>
+<li><b>Content:</b> label images, artwork and listing texts your company uploads. These are normally product
+information, not personal data.</li>
+</ul>
+<h2>Why</h2>
+<p>To provide the service your company signed up for, keep it secure, prove who approved what (audit trail),
+and send service e-mails (password reset, invitations, review notifications). We do not sell personal data
+and do not use your files to train AI models without written permission.</p>
+<h2>Who processes it</h2>
+<p>Hosting: [cloud provider, region]. E-mail delivery: [provider]. Each acts on our instructions under a data
+processing agreement.</p>
+<h2>How long</h2>
+<p>Account data: while the account exists. Scans: as set by your company administrator (Company settings),
+or until the contract ends. Backups: [14] days. Audit log: [period].</p>
+<h2>Your rights</h2>
+<p>You can ask for access, correction or erasure of your personal data, and nominate a person to act for you.
+Company administrators can export all company data and delete users from the Company page. Contact
+[privacy e-mail]; we reply within [period]. You may also complain to the Data Protection Board of India.</p>
+<p><a href="/">Back to LabelCheck</a> · <a href="/terms.html">Terms of use</a></p>
+</div></main></body></html>
