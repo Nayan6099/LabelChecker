@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LabelCheck</title>
 <link rel="stylesheet" href="/app.css">
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
   (function() {
     try {
@@ -200,7 +201,7 @@
             <li>✓ 30-day cloud access history</li>
             <li>✓ No recurring charge or lock-in</li>
           </ul>
-          <a href="#/signup?plan=trial" class="sbtn price-btn">Buy Single Scan</a>
+          <a href="#/signup?plan=pack_1" class="sbtn price-btn">Buy Single Scan</a>
         </div>
 
         <div class="card price-card featured">
@@ -216,7 +217,7 @@
             <li>✓ E-commerce listing check</li>
             <li>✓ Priority email support</li>
           </ul>
-          <a href="#/signup?plan=trial" class="btn price-btn">Buy 50 Scans Pack</a>
+          <a href="#/signup?plan=pack_50" class="btn price-btn">Buy 50 Scans Pack</a>
         </div>
 
         <div class="card price-card">
@@ -231,7 +232,7 @@
             <li>✓ API integration token included</li>
             <li>✓ Phone &amp; WhatsApp support</li>
           </ul>
-          <a href="#/signup?plan=trial" class="btn price-btn">Buy 250 Scans Pack</a>
+          <a href="#/signup?plan=pack_250" class="btn price-btn">Buy 250 Scans Pack</a>
         </div>
       </div>
     </section>
@@ -274,7 +275,7 @@
     </div>
     <button class="btn" type="submit">Log in</button>
     <div class="hint err" id="l-msg"></div>
-    <p class="hint">Don't have an account? <a href="#/signup">Sign up</a> · <a href="#/">← Back to home</a></p>
+    <p class="hint">Don't have an account? <a href="#/signup">Sign up</a> · <a href="#/resend">Verify email</a> · <a href="#/">← Back to home</a></p>
     <p class="hint"><a href="#/forgot" id="forgot-link">Forgot password?</a> ·
       <a href="/terms.html" target="_blank" rel="noopener">Terms of use</a> ·
       <a href="/privacy.html" target="_blank" rel="noopener">Privacy</a></p>
@@ -293,15 +294,19 @@
     <label for="su-email">Work email</label>
     <input type="email" id="su-email" placeholder="name@company.com" required maxlength="254">
     <label for="su-pass">Password</label>
-    <input type="password" id="su-pass" autocomplete="new-password" required minlength="10">
-    <div class="hint">At least 10 characters, one capital letter, one number.</div>
-    <label for="su-plan">Select Plan</label>
+    <input type="password" id="su-pass" autocomplete="new-password" required minlength="12">
+    <div class="hint">At least 12 characters, including uppercase, lowercase, numbers, and special symbols.</div>
+    <input type="text" id="su-website" name="website" style="display:none;" tabindex="-1" autocomplete="off">
+    <label for="su-plan">Select Plan / Pack</label>
     <select id="su-plan">
-      <option value="trial">Trial (100 free scans / mo, 3 users)</option>
-      <option value="standard">Standard (2,000 scans / mo, 10 users)</option>
-      <option value="business">Business (10,000 scans / mo, 50 users)</option>
+      <option value="trial">Trial Plan (100 free scans/mo, 3 users) — FREE</option>
+      <option value="standard">Standard Plan (2,000 scans/mo, 10 users) — ₹4,999/mo</option>
+      <option value="business">Business Plan (10,000 scans/mo, 50 users) — ₹14,999/mo</option>
+      <option value="pack_1">Single Scan Credit (On-demand) — ₹99</option>
+      <option value="pack_50">Batch Pack (50 Scans) — ₹3,999</option>
+      <option value="pack_250">Agency Pack (250 Scans) — ₹14,999</option>
     </select>
-    <button class="btn" type="submit" id="su-btn">Create account &amp; start scanning</button>
+    <button class="btn" type="submit" id="su-btn">Create Free Account</button>
     <div class="hint err" id="su-msg"></div>
     <p class="hint">By signing up, you agree to our <a href="/terms.html" target="_blank" rel="noopener">Terms</a> and <a href="/privacy.html" target="_blank" rel="noopener">Privacy Notice</a>.</p>
     <p class="hint">Already have an account? <a href="#/login">Log in</a> · <a href="#/">← Back to home</a></p>
@@ -312,11 +317,37 @@
 <section id="forgot-view" class="center hidden">
   <form class="card login" id="forgot-form">
     <h2>Reset your password</h2>
-    <p class="hint">Enter your e-mail. If it belongs to an account, we send a link that works for 1 hour.</p>
+    <p class="hint">Enter your e-mail. If it belongs to an account, we send a link that works for 15 minutes.</p>
     <label for="f-email">Email</label><input type="email" id="f-email" required autocomplete="username">
     <button class="btn" type="submit">Send reset link</button>
     <div class="hint" id="f-msg"></div>
     <p class="hint"><a href="#/">Back to log in</a></p>
+  </form>
+</section>
+
+<!-- EMAIL VERIFICATION -->
+<section id="verify-view" class="center hidden">
+  <div class="card login" style="text-align:center;">
+    <h1>Label<span>Check</span></h1>
+    <div id="verify-icon" style="font-size:42px; margin: 12px 0;">⏳</div>
+    <h2 id="verify-title">Verifying your email…</h2>
+    <p id="verify-msg" class="hint">Please wait while we confirm your email address.</p>
+    <div style="margin-top:20px;">
+      <a href="#/login" class="btn" id="verify-action-btn" style="text-decoration:none; display:inline-block;">Go to Login</a>
+    </div>
+  </div>
+</section>
+
+<!-- RESEND VERIFICATION -->
+<section id="resend-view" class="center hidden">
+  <form class="card login" id="resend-form">
+    <h2>Resend verification email</h2>
+    <p class="hint">Enter your registered email address to receive a fresh verification link.</p>
+    <label for="rv-email">Email</label>
+    <input type="email" id="rv-email" required autocomplete="username">
+    <button class="btn" type="submit" id="rv-btn">Send verification link</button>
+    <div class="hint" id="rv-msg"></div>
+    <p class="hint"><a href="#/login">Back to log in</a></p>
   </form>
 </section>
 <section id="setpw-view" class="center hidden">
@@ -508,7 +539,25 @@
         </form>
       </div>
       <div>
-        <div class="card"><h2>Users</h2><div class="tablewrap"><table id="ulist"></table></div><div id="ulist-pg"></div></div>
+        <div class="card" id="billing-card">
+          <h2>Subscription &amp; Plans (Razorpay)</h2>
+          <div id="billing-current-info" class="hint" style="margin-bottom:12px;"></div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+            <button class="btn" id="btn-upgrade-standard" type="button">Upgrade to Standard (₹4,999/mo)</button>
+            <button class="sbtn" id="btn-upgrade-business" type="button">Upgrade to Business (₹14,999/mo)</button>
+          </div>
+          <div style="font-weight:600; font-size:13px; margin: 12px 0 6px;">On-Demand Scan Top-Ups</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button class="sbtn" id="btn-buy-pack1" type="button">1 Scan (₹99)</button>
+            <button class="sbtn" id="btn-buy-pack50" type="button">50 Scans (₹3,999)</button>
+            <button class="sbtn" id="btn-buy-pack250" type="button">250 Scans (₹14,999)</button>
+          </div>
+          <div id="billing-msg" class="hint" style="margin-top:8px;"></div>
+          <h3 style="margin-top:18px; font-size:14px; font-weight:600;">Payment History</h3>
+          <div class="tablewrap"><table id="billing-history-table"></table></div>
+          <div id="billing-history-pg"></div>
+        </div>
+        <div class="card" style="margin-top:20px"><h2>Users</h2><div class="tablewrap"><table id="ulist"></table></div><div id="ulist-pg"></div></div>
         <div class="card" style="margin-top:20px">
           <h2>API keys</h2>
           <div class="hint">For connecting your ERP, PLM or e-commerce system. Keys act as an uploader: they can upload

@@ -65,6 +65,10 @@ class Settings:
         # limits
         self.rate_upload_per_min = _int("LABELCHECK_RATE_UPLOADS_PER_MIN", 120)   # per company
         self.rate_api_per_min = _int("LABELCHECK_RATE_API_PER_MIN", 600)          # per API key
+        # payments (Razorpay)
+        self.razorpay_key_id = _env("LABELCHECK_RAZORPAY_KEY_ID")
+        self.razorpay_key_secret = _env("LABELCHECK_RAZORPAY_KEY_SECRET")
+        self.razorpay_webhook_secret = _env("LABELCHECK_RAZORPAY_WEBHOOK_SECRET")
         # bootstrap
         self.admin_email = _env("LABELCHECK_ADMIN_EMAIL")
         self.admin_password = _env("LABELCHECK_ADMIN_PASSWORD")

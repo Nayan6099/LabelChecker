@@ -33,14 +33,24 @@ from .config import settings
 log = logging.getLogger("labelcheck.auth")
 COOKIE = "lc_session"
 ROLES = {"uploader": 1, "reviewer": 2, "admin": 3}
-MIN_PASSWORD = 10
+MIN_PASSWORD = 12
 LOGIN_FAILS, LOGIN_WINDOW = 5, 15 * 60
-_ph = PasswordHasher()
+# Argon2id with RFC 9106 recommended production settings:
+_ph = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4, hash_len=32, salt_len=16)
 _DEV_KEY = "labelcheck-development-only-key-do-not-use-in-production"
 
-# paths a user who must set up 2FA can still use
+COMMON_PASSWORDS = {
+    "password1234", "password@123", "123456789012", "admin@123456", "labelcheck123",
+    "qwerty123456", "welcome@1234", "letmein12345", "changeme1234", "iloveyou1234",
+    "administrator", "password2026", "secret123456", "adminadmin12", "rootroot1234"
+}
+
+# paths a user who must set up 2FA or verify email can still use
 _2FA_SETUP_PATHS = {"/api/auth/me", "/api/auth/logout", "/api/auth/2fa/setup", "/api/auth/2fa/enable",
-                    "/api/auth/accept-terms", "/api/auth/password"}
+                    "/api/auth/accept-terms", "/api/auth/password", "/api/auth/verify-email",
+                    "/api/auth/resend-verification"}
+_VERIFY_SETUP_PATHS = {"/api/auth/me", "/api/auth/logout", "/api/auth/verify-email",
+                       "/api/auth/resend-verification"}
 
 
 # ---------------- passwords ----------------
@@ -56,16 +66,49 @@ def check_password(stored, pw):
         return False
 
 
-def password_problem(pw):
+def password_problem(pw: str, user_context: dict = None) -> str | None:
     if len(pw) < MIN_PASSWORD:
-        return f"Password must be at least {MIN_PASSWORD} characters."
-    if pw.lower() == pw or not re.search(r"\d", pw):
-        return "Password needs at least one capital letter and one number."
+        return f"Password must be at least {MIN_PASSWORD} characters long."
+    if not re.search(r"[A-Z]", pw):
+        return "Password must contain at least one uppercase letter (A-Z)."
+    if not re.search(r"[a-z]", pw):
+        return "Password must contain at least one lowercase letter (a-z)."
+    if not re.search(r"\d", pw):
+        return "Password must contain at least one number (0-9)."
+    if not re.search(r"[^A-Za-z0-9]", pw):
+        return "Password must contain at least one special symbol (e.g. !@#$%^&*)."
+    COMMON_PATTERNS = ("password", "qwerty", "admin123", "welcome123", "letmein", "12345678")
+    if any(pat in pw.lower() for pat in COMMON_PATTERNS) or pw.lower() in COMMON_PASSWORDS:
+        return "This password is too common or easily guessable. Please choose a stronger password."
+    if user_context:
+        pw_lower = pw.lower()
+        email = (user_context.get("email") or "").lower()
+        if email and "@" in email:
+            for ep in re.split(r"[@.]", email):
+                if len(ep) >= 3 and ep not in ("com", "org", "net", "edu", "test", "local", "mail") and ep in pw_lower:
+                    return "Password must not contain parts of your email address."
+        name = (user_context.get("name") or "").lower()
+        for part in re.split(r"[\s._-]+", name):
+            if len(part) >= 3 and part in pw_lower:
+                return "Password must not contain parts of your name."
     return None
 
 
 def random_password():
-    return secrets.token_urlsafe(24) + "A1"
+    alphabet = "abcdefghjkmnpqrstuvwxyz"
+    caps = "ABCDEFGHJKLMNPQRSTUVWXYZ"
+    digits = "23456789"
+    symbols = "!@#$%^&*-_=+"
+    pwd = [
+        secrets.choice(alphabet),
+        secrets.choice(caps),
+        secrets.choice(digits),
+        secrets.choice(symbols),
+    ]
+    all_chars = alphabet + caps + digits + symbols
+    pwd += [secrets.choice(all_chars) for _ in range(16)]
+    secrets.SystemRandom().shuffle(pwd)
+    return "".join(pwd)
 
 
 # ---------------- tokens ----------------
@@ -84,10 +127,10 @@ def end_session(token):
     db.delete_session(hash_token(token))
 
 
-def new_link_token(user_id, kind, hours):
-    """One-time token for password reset or invite. Returns the token (sent by e-mail)."""
+def new_link_token(user_id, kind, hours=None, minutes=None):
+    """One-time token for password reset, email verification, or invite. Returns the token."""
     token = secrets.token_urlsafe(32)
-    db.create_token(hash_token(token), user_id, kind, hours)
+    db.create_token(hash_token(token), user_id, kind, hours=hours, minutes=minutes)
     return token
 
 
@@ -234,6 +277,8 @@ def current_user(request: Request):
         user.pop(k, None)
     user["via"] = kind
     org = db.get_org(user["org_id"])
+    if not user.get("email_verified", True) and request.url.path not in _VERIFY_SETUP_PATHS:
+        raise HTTPException(403, "Please verify your email address to continue.")
     if org["require_2fa"] and not user["totp_enabled"] and request.url.path not in _2FA_SETUP_PATHS:
         raise HTTPException(403, "Your company requires two-step login. Set it up under Account first.")
     request.state.principal = user

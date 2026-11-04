@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import auth, db, pipeline
-from .api import auth_routes, batches, ops, platform, scans, users, webhook_routes
+from .api import auth_routes, batches, billing, ops, platform, scans, users, webhook_routes
 from .api.ops import VERSION
 from .config import settings
 from .observability import HTTP_REQUESTS, HTTP_SECONDS, request_id, setup_logging
@@ -64,8 +64,11 @@ app = FastAPI(title="LabelCheck API", version=VERSION, lifespan=lifespan,
                           "Authenticate with an API key: header `X-API-Key: lc_...` "
                           "(create one under Company > API keys).")
 
-CSP = ("default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; "
-       "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+CSP = ("default-src 'self'; img-src 'self' data: blob: https://cdn.razorpay.com; style-src 'self' 'unsafe-inline'; "
+       "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; "
+       "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com; "
+       "frame-src 'self' https://api.razorpay.com https://checkout.razorpay.com; "
+       "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 # Swagger UI loads its script and style from jsdelivr; allow that on the docs page only.
 CSP_DOCS = ("default-src 'self'; img-src 'self' data: https://fastapi.tiangolo.com; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
@@ -121,7 +124,7 @@ async def validation_error(request: Request, exc: RequestValidationError):
 
 
 for r in (ops.router, auth_routes.router, users.router, platform.router, scans.router, batches.router,
-          webhook_routes.router):
+          webhook_routes.router, billing.router):
     app.include_router(r)
 
 app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")

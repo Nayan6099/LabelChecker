@@ -87,7 +87,7 @@ function initTheme() {
 }
 
 // ---------------- auth / start ----------------
-const VIEWS = ["landing-view", "login-view", "signup-view", "terms-view", "app-view", "forgot-view", "setpw-view"];
+const VIEWS = ["landing-view", "login-view", "signup-view", "terms-view", "app-view", "forgot-view", "setpw-view", "verify-view", "resend-view"];
 function showOnly(id) {
   VIEWS.forEach(v => {
     const el = $("#" + v);
@@ -98,6 +98,31 @@ function showOnly(id) {
 }
 function showHome() { ME = null; showOnly("landing-view"); }
 function showLogin() { ME = null; showOnly("login-view"); $("#l-email").focus(); }
+
+function clientPasswordProblem(pw) {
+  if (pw.length < 12) return "Password must be at least 12 characters long.";
+  if (!/[A-Z]/.test(pw)) return "Password must contain at least one uppercase letter (A-Z).";
+  if (!/[a-z]/.test(pw)) return "Password must contain at least one lowercase letter (a-z).";
+  if (!/\d/.test(pw)) return "Password must contain at least one number (0-9).";
+  if (!/[^A-Za-z0-9]/.test(pw)) return "Password must contain at least one special symbol (e.g. !@#$%^&*).";
+  return null;
+}
+
+const PLAN_PRICES = {
+  trial: { label: "Create Free Account", price: 0 },
+  standard: { label: "Proceed to Payment (₹4,999)", price: 4999 },
+  business: { label: "Proceed to Payment (₹14,999)", price: 14999 },
+  pack_1: { label: "Proceed to Payment (₹99)", price: 99 },
+  pack_50: { label: "Proceed to Payment (₹3,999)", price: 3999 },
+  pack_250: { label: "Proceed to Payment (₹14,999)", price: 14999 },
+};
+function updateSignupButton() {
+  const p = $("#su-plan") ? $("#su-plan").value : "trial";
+  const info = PLAN_PRICES[p] || PLAN_PRICES.trial;
+  if ($("#su-btn")) $("#su-btn").textContent = info.label;
+}
+if ($("#su-plan")) $("#su-plan").onchange = updateSignupButton;
+
 function showSignup(plan) {
   ME = null;
   showOnly("signup-view");
@@ -105,6 +130,7 @@ function showSignup(plan) {
     const opts = Array.from($("#su-plan").options).map(o => o.value);
     if (opts.includes(plan)) $("#su-plan").value = plan;
   }
+  updateSignupButton();
   $("#su-cname").focus();
 }
 let SETPW = null;   // {kind: "reset"|"invite", token}
@@ -143,22 +169,48 @@ $("#login-form").onsubmit = async e => {
 $("#signup-form").onsubmit = async e => {
   e.preventDefault();
   $("#su-msg").textContent = "";
+  const pw = $("#su-pass").value;
+  const pwErr = clientPasswordProblem(pw);
+  if (pwErr) { $("#su-msg").textContent = pwErr; return; }
+
   $("#su-btn").disabled = true;
+  const chosenPlan = $("#su-plan") ? $("#su-plan").value : "trial";
+  const website = $("#su-website") ? $("#su-website").value : "";
   try {
-    await api("/api/auth/register", {
+    const reg = await api("/api/auth/register", {
       method: "POST",
       json: {
         company_name: $("#su-cname").value,
         name: $("#su-name").value,
         email: $("#su-email").value,
-        password: $("#su-pass").value,
-        plan: $("#su-plan").value
+        password: pw,
+        plan: "trial",
+        website: website
       }
     });
     $("#su-pass").value = "";
+
+    if (reg.verify_token) {
+      // In dev mode without SMTP, allow instant 1-click verification
+      $("#su-msg").style.color = "#16a34a";
+      $("#su-msg").innerHTML = `Account created! <a href="${esc(reg.verify_url)}">Click here to verify email</a>.`;
+      return;
+    }
+
+    if (reg.user && !reg.user.email_verified) {
+      $("#su-msg").style.color = "#16a34a";
+      $("#su-msg").textContent = "Account created! We've sent a verification link to your email. Please check your inbox and verify before logging in.";
+      return;
+    }
+
     location.hash = "#/";
-    start();
+    await start();
+
+    if (chosenPlan && chosenPlan !== "trial") {
+      await checkoutRazorpay(chosenPlan);
+    }
   } catch (err) {
+    $("#su-msg").style.color = "#dc2626";
     $("#su-msg").textContent = err.message;
   } finally {
     $("#su-btn").disabled = false;
@@ -169,9 +221,25 @@ $("#forgot-form").onsubmit = async e => {
   try { const r = await api("/api/auth/forgot", {method: "POST", json: {email: $("#f-email").value}}); $("#f-msg").textContent = r.message; }
   catch (err) { $("#f-msg").textContent = err.message; }
 };
+$("#resend-form").onsubmit = async e => {
+  e.preventDefault();
+  $("#rv-btn").disabled = true;
+  try {
+    const r = await api("/api/auth/resend-verification", {method: "POST", json: {email: $("#rv-email").value}});
+    $("#rv-msg").textContent = r.message;
+    $("#rv-msg").style.color = "#16a34a";
+  } catch (err) {
+    $("#rv-msg").textContent = err.message;
+    $("#rv-msg").style.color = "#dc2626";
+  } finally {
+    $("#rv-btn").disabled = false;
+  }
+};
 $("#setpw-form").onsubmit = async e => {
   e.preventDefault();
   if ($("#s-pass").value !== $("#s-pass2").value) { $("#s-msg").textContent = "The two passwords are different."; return; }
+  const pwErr = clientPasswordProblem($("#s-pass").value);
+  if (pwErr) { $("#s-msg").textContent = pwErr; return; }
   try {
     await api(SETPW.kind === "invite" ? "/api/auth/accept-invite" : "/api/auth/reset",
               {method: "POST", json: {token: SETPW.token, password: $("#s-pass").value}});
@@ -196,11 +264,12 @@ async function route() {
     return true;
   }
 
-  const m = hash.match(/^#\/(login|signup|reset|invite|forgot|scan|batch)\/?([A-Za-z0-9_\-]*)/);
+  const m = hash.match(/^#\/(login|signup|reset|invite|forgot|verify|resend|scan|batch)\/?([A-Za-z0-9_\-]*)/);
   if (!m) {
     if (hash === "#/login") { showLogin(); return true; }
+    if (hash === "#/resend") { showOnly("resend-view"); return true; }
     if (hash === "#/signup" || hash.startsWith("#/signup?")) {
-      const planMatch = hash.match(/[?&]plan=([a-z]+)/);
+      const planMatch = hash.match(/[?&]plan=([a-z0-9_]+)/);
       showSignup(planMatch ? planMatch[1] : "trial");
       return true;
     }
@@ -208,12 +277,34 @@ async function route() {
   }
   const [, kind, arg] = m;
   if (kind === "login") { showLogin(); return true; }
+  if (kind === "resend") { showOnly("resend-view"); return true; }
   if (kind === "signup") {
-    const planMatch = hash.match(/[?&]plan=([a-z]+)/);
+    const planMatch = hash.match(/[?&]plan=([a-z0-9_]+)/);
     showSignup(planMatch ? planMatch[1] : (arg || "trial"));
     return true;
   }
   if (kind === "forgot") { showOnly("forgot-view"); return true; }
+  if (kind === "verify") {
+    showOnly("verify-view");
+    $("#verify-icon").textContent = "⏳";
+    $("#verify-title").textContent = "Verifying email…";
+    $("#verify-msg").textContent = "Please wait while we confirm your email address.";
+    try {
+      const res = await api("/api/auth/verify-email", {method: "POST", json: {token: arg}});
+      $("#verify-icon").textContent = "✅";
+      $("#verify-title").textContent = "Email Verified!";
+      $("#verify-msg").textContent = res.message || "Your email address has been confirmed. You can now log in.";
+      $("#verify-action-btn").textContent = "Log In";
+      $("#verify-action-btn").href = "#/login";
+    } catch (err) {
+      $("#verify-icon").textContent = "❌";
+      $("#verify-title").textContent = "Verification Failed";
+      $("#verify-msg").textContent = err.message || "This verification link is invalid or expired.";
+      $("#verify-action-btn").textContent = "Request New Link";
+      $("#verify-action-btn").href = "#/resend";
+    }
+    return true;
+  }
   if (kind === "reset" || kind === "invite") {
     SETPW = {kind, token: arg};
     $("#s-msg").textContent = "";
@@ -843,6 +934,7 @@ async function loadCompany(userPage = 1) {
   });
   loadKeys();
   loadHooks();
+  loadBilling(o);
   if ($("#email-status-box")) {
     if (META.email_enabled) {
       $("#email-status-box").innerHTML = `<span style="color:#16a34a; font-weight:600;">✓ SMTP is active</span> — outgoing emails (user invites, password resets, review approvals, batch notifications) are sent automatically.`;
@@ -870,6 +962,142 @@ async function loadCompany(userPage = 1) {
     };
   }
 }
+
+// ---------------- billing & razorpay ----------------
+let BILLING_PAGE = 1;
+async function loadBilling(org) {
+  if (!$("#billing-card")) return;
+  const plan = org.plan || "trial";
+  const quota = org.scan_quota === null ? "unlimited" : org.scan_quota;
+  const ulim = org.user_limit === null ? "unlimited" : org.user_limit;
+  const isTrial = plan === "trial";
+  const isStandard = plan === "standard";
+  const isBusiness = plan === "business";
+
+  $("#billing-current-info").innerHTML = `
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+      <span style="font-size:15px; font-weight:700;">Current Plan:</span>
+      <span class="pill" style="font-weight:700; ${isTrial ? 'background:#e2e8f0; color:#334155;' : (isStandard ? 'background:#dbeafe; color:#1d4ed8;' : 'background:#fef3c7; color:#b45309;')}">${esc(org.plan_label || plan.toUpperCase())}</span>
+      ${isTrial ? '<span style="color:#16a34a; font-weight:600; font-size:12px;">(Free Tier)</span>' : ''}
+    </div>
+    <div><b>Monthly scan quota:</b> ${quota} scans &nbsp;·&nbsp; <b>Team seats:</b> up to ${ulim} users</div>
+  `;
+
+  if ($("#btn-upgrade-standard")) {
+    $("#btn-upgrade-standard").textContent = isStandard ? "Active Plan (Standard)" : "Upgrade to Standard (₹4,999/mo)";
+    $("#btn-upgrade-standard").disabled = isStandard;
+    $("#btn-upgrade-standard").onclick = () => checkoutRazorpay("standard");
+  }
+  if ($("#btn-upgrade-business")) {
+    $("#btn-upgrade-business").textContent = isBusiness ? "Active Plan (Business)" : "Upgrade to Business (₹14,999/mo)";
+    $("#btn-upgrade-business").disabled = isBusiness;
+    $("#btn-upgrade-business").onclick = () => checkoutRazorpay("business");
+  }
+
+  if ($("#btn-buy-pack1")) $("#btn-buy-pack1").onclick = () => checkoutRazorpay("pack_1");
+  if ($("#btn-buy-pack50")) $("#btn-buy-pack50").onclick = () => checkoutRazorpay("pack_50");
+  if ($("#btn-buy-pack250")) $("#btn-buy-pack250").onclick = () => checkoutRazorpay("pack_250");
+
+  await loadBillingHistory();
+}
+
+async function loadBillingHistory(page = 1) {
+  BILLING_PAGE = page;
+  try {
+    const res = await api(`/api/billing/history?page=${BILLING_PAGE}&limit=5&paginated=true`);
+    const rows = res.items || (Array.isArray(res) ? res : []);
+    const total = res.total ?? rows.length;
+    $("#billing-history-table").innerHTML = rows.length
+      ? `<tr><th>Date</th><th>Plan / Item</th><th>Amount</th><th>Status</th><th>Receipt / ID</th></tr>` + rows.map(p => `
+        <tr>
+          <td>${when(p.created_at)}</td>
+          <td><b>${esc(p.plan)}</b></td>
+          <td style="color:#16a34a; font-weight:600;">₹${((p.amount_paise || 0) / 100).toLocaleString("en-IN")}</td>
+          <td><span class="pill" style="${p.status === 'paid' ? 'background:#dcfce7; color:#15803d;' : 'background:#fee2e2; color:#b91c1c;'}">${esc(p.status.toUpperCase())}</span></td>
+          <td style="font-family:monospace; font-size:12px;">${esc(p.payment_id || p.order_id)}</td>
+        </tr>`).join("")
+      : `<tr><td class="empty" colspan="5">No payment history yet.</td></tr>`;
+    const pgEl = $("#billing-history-pg");
+    if (pgEl) {
+      pgEl.innerHTML = renderPaginationBar({page: BILLING_PAGE, total, limit: 5});
+      wirePagination(pgEl, loadBillingHistory);
+    }
+  } catch (_) {}
+}
+
+async function checkoutRazorpay(plan) {
+  const msgEl = $("#billing-msg") || $("#su-msg");
+  if (msgEl) { msgEl.textContent = "Initializing Razorpay checkout…"; msgEl.style.color = "var(--text-dim)"; }
+  try {
+    const order = await api("/api/billing/create-order", {method: "POST", json: {plan}});
+    if (order.is_mock || typeof Razorpay === "undefined") {
+      const ok = confirm(`[Razorpay Sandbox]\nConfirm payment of ₹${(order.amount / 100).toLocaleString('en-IN')} for ${order.plan_label}?`);
+      if (!ok) {
+        if (msgEl) msgEl.textContent = "Payment cancelled.";
+        return;
+      }
+      const verify = await api("/api/billing/verify-payment", {
+        method: "POST",
+        json: {
+          razorpay_order_id: order.order_id,
+          razorpay_payment_id: "pay_sim_" + order.order_id.replace("order_", ""),
+          razorpay_signature: "mock_signature",
+          plan: plan
+        }
+      });
+      if (msgEl) { msgEl.textContent = verify.message; msgEl.style.color = "#16a34a"; }
+      await start();
+      loadCompany();
+      return;
+    }
+
+    const options = {
+      key: order.key_id,
+      amount: order.amount,
+      currency: order.currency || "INR",
+      name: "LabelCheck",
+      description: order.description,
+      order_id: order.order_id,
+      handler: async function (response) {
+        try {
+          if (msgEl) { msgEl.textContent = "Verifying payment…"; msgEl.style.color = "var(--text-dim)"; }
+          const verify = await api("/api/billing/verify-payment", {
+            method: "POST",
+            json: {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              plan: plan
+            }
+          });
+          if (msgEl) { msgEl.textContent = verify.message; msgEl.style.color = "#16a34a"; }
+          await start();
+          loadCompany();
+        } catch (err) {
+          if (msgEl) { msgEl.textContent = "Verification failed: " + err.message; msgEl.style.color = "#dc2626"; }
+        }
+      },
+      prefill: {
+        name: ME ? ME.name : "",
+        email: ME ? ME.email : ""
+      },
+      theme: {
+        color: "#2563eb"
+      }
+    };
+    const rzp = new Razorpay(options);
+    rzp.on("payment.failed", function (resp) {
+      if (msgEl) {
+        msgEl.textContent = "Payment failed: " + (resp.error ? resp.error.description : "Transaction declined");
+        msgEl.style.color = "#dc2626";
+      }
+    });
+    rzp.open();
+  } catch (err) {
+    if (msgEl) { msgEl.textContent = err.message; msgEl.style.color = "#dc2626"; }
+  }
+}
+
 function showLink(sel, msg, url) {
   $(sel).innerHTML = `${esc(msg)} ${META.email_enabled ? "" : "E-mail is not set up on this server, so share this link yourself:"}
     <br><input type="text" readonly value="${esc(url)}" class="copy">`;

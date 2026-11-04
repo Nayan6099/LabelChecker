@@ -1,13 +1,14 @@
 """Company administration: users, company settings, API keys, audit log, data export."""
 import json
 import os
+import re
 import tempfile
 import zipfile
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.background import BackgroundTask
 
 from .. import auth, db, mailer
@@ -26,6 +27,14 @@ class UserIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     role: str = Field(pattern="^(admin|reviewer|uploader)$")
     password: Optional[str] = Field(None, max_length=200)   # empty = send an invite e-mail
+
+    @field_validator("name")
+    @classmethod
+    def sanitize_name(cls, v: str) -> str:
+        cleaned = v.strip()
+        if re.search(r"[<>]", cleaned):
+            raise ValueError("HTML tags or special angle brackets (<, >) are not allowed.")
+        return cleaned
 
 
 class UserPatch(BaseModel):
@@ -62,7 +71,7 @@ def users_create(body: UserIn, request: Request, user=Depends(auth.require("admi
         raise HTTPException(409, "A user with this email already exists.")
     check_user_limit(user["org_id"])
     if body.password:
-        problem = auth.password_problem(body.password)
+        problem = auth.password_problem(body.password, {"email": body.email, "name": body.name})
         if problem:
             raise HTTPException(400, problem)
     pw = body.password or auth.random_password()
@@ -100,7 +109,7 @@ def users_update(uid: int, body: UserPatch, request: Request, user=Depends(auth.
             check_user_limit(user["org_id"])
         vals["active"] = detail["active"] = body.active
     if body.password:
-        problem = auth.password_problem(body.password)
+        problem = auth.password_problem(body.password, {"email": body.email, "name": body.name})
         if problem:
             raise HTTPException(400, problem)
         vals["password_hash"] = auth.hash_password(body.password)

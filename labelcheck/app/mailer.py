@@ -122,16 +122,35 @@ def password_reset(to, name, url):
     subject = "Reset your LabelCheck password"
     text = (
         f"Hello {name},\n\nSomeone (hopefully you) asked to reset your LabelCheck password.\n"
-        f"Open this link within 1 hour to choose a new password:\n\n{url}\n\n"
+        f"Open this link within 15 minutes to choose a new password:\n\n{url}\n\n"
         "If you did not ask for this, ignore this e-mail; your password stays the same."
     )
     body_html = f"""
       <p>Hello <b>{safe_name}</b>,</p>
       <p>Someone (hopefully you) requested to reset the password for your LabelCheck account.</p>
-      <p>Click the button below within <b>1 hour</b> to set a new password:</p>
+      <p>Click the button below within <b>15 minutes</b> to set a new password:</p>
       <p style="margin-top: 24px; color: #64748b; font-size: 13px;">If you did not request a password reset, you can safely ignore this message; your password will remain unchanged.</p>
     """
     html = _base_html(subject, body_html, "Reset My Password", url)
+    send(to, subject, text, html=html)
+
+
+def verify_email(to, name, url):
+    safe_name = html_lib.escape(name)
+    subject = "Verify your email address for LabelCheck"
+    text = (
+        f"Hello {name},\n\nThank you for signing up for LabelCheck!\n"
+        f"Please verify your email address by opening this link:\n\n{url}\n\n"
+        f"This link expires in 24 hours.\n"
+    )
+    body_html = f"""
+      <p>Hello <b>{safe_name}</b>,</p>
+      <p>Welcome to LabelCheck! Please confirm your email address to activate your account and access the compliance platform.</p>
+      <p style="margin: 20px 0;"><a href="{url}" style="background:#2563eb; color:#ffffff; padding:10px 20px; border-radius:6px; text-decoration:none; font-weight:600; display:inline-block;">Verify Email Address</a></p>
+      <p style="color:#64748b; font-size:13px;">Or copy and paste this link into your browser:<br><code>{url}</code></p>
+      <p style="color:#64748b; font-size:12px;">This verification link will expire in 24 hours.</p>
+    """
+    html = _base_html(subject, body_html, "Verify Email Address", url)
     send(to, subject, text, html=html)
 
 
@@ -254,3 +273,33 @@ def send_test_email(to, name="Administrator"):
     """
     html = _base_html(subject, body_html, "Open LabelCheck", settings.public_url)
     send(to, subject, text, html=html, wait=True)
+
+
+def payment_receipt(to, name, org_name, plan_label, amount_inr, payment_id, order_id):
+    safe_name = html_lib.escape(name)
+    safe_org = html_lib.escape(org_name)
+    subject = f"Receipt: Payment of ₹{amount_inr:,.0f} for {plan_label} confirmed"
+    text = (
+        f"Hello {name},\n\nThank you for your payment! Your account has been upgraded.\n\n"
+        f"Company: {org_name}\n"
+        f"Plan/Item: {plan_label}\n"
+        f"Amount: ₹{amount_inr:,.2f}\n"
+        f"Payment ID: {payment_id}\n"
+        f"Order ID: {order_id}\n\n"
+        f"Access your dashboard: {settings.public_url}/#/\n"
+    )
+    body_html = f"""
+      <p>Hello <b>{safe_name}</b>,</p>
+      <p>Thank you for your payment. Your transaction has been confirmed and your plan/credits are active.</p>
+      <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+        <tr><td style="padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #e2e8f0;">Company:</td><td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0;">{safe_org}</td></tr>
+        <tr><td style="padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #e2e8f0;">Plan / Pack:</td><td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 600; color: #2563eb;">{html_lib.escape(plan_label)}</td></tr>
+        <tr><td style="padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #e2e8f0;">Amount Paid:</td><td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-weight: 700; color: #16a34a;">₹{amount_inr:,.2f}</td></tr>
+        <tr><td style="padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #e2e8f0; font-size: 13px; color: #64748b;">Payment ID:</td><td style="padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 13px; font-family: monospace;">{html_lib.escape(payment_id or '-')}</td></tr>
+        <tr><td style="padding: 8px 12px; font-weight: 600; font-size: 13px; color: #64748b;">Order ID:</td><td style="padding: 8px 12px; font-size: 13px; font-family: monospace;">{html_lib.escape(order_id)}</td></tr>
+      </table>
+      <p>You can view your invoice receipts and quota updates anytime under the <b>Company &gt; Subscription &amp; Billing</b> tab.</p>
+    """
+    html = _base_html(subject, body_html, "Go to LabelCheck", f"{settings.public_url}/#/")
+    send(to, subject, text, html=html)
+

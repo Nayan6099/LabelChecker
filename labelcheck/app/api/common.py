@@ -43,6 +43,7 @@ def public_user(u):
     return {"id": u["id"], "email": u["email"], "name": u["name"], "role": u["role"],
             "org_id": u["org_id"], "org_name": org["name"],
             "terms_accepted": bool(u.get("terms_accepted_at")),
+            "email_verified": bool(u.get("email_verified", True)),
             "totp_enabled": bool(u.get("totp_enabled")), "notify": bool(u.get("notify", True)),
             "is_platform_admin": bool(u.get("is_platform_admin")),
             "org_requires_2fa": bool(org["require_2fa"]), "via": u.get("via")}

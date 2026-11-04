@@ -85,7 +85,7 @@ def test_concurrent_migrations_do_not_race(tmp_path):
     results = [p.communicate(timeout=120) for p in procs]
     assert all(p.returncode == 0 for p in procs), [e.decode()[-400:] for _, e in results]
     with create_engine(target).connect() as c:
-        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
+        assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0005"
     with admin.connect() as c:
         c.execute(text(f"DROP DATABASE {fresh} WITH (FORCE)"))
 
@@ -145,10 +145,10 @@ def test_forgot_and_reset_password(client):
     assert same["message"] == r.json()["message"]              # no account enumeration
     token = last_link("reset")
     assert client.post("/api/auth/reset", json={"token": token, "password": "weak"}).status_code == 400
-    assert client.post("/api/auth/reset", json={"token": token, "password": "Newpass12345"}).status_code == 200
-    assert client.post("/api/auth/reset", json={"token": token, "password": "Newpass12345"}).status_code == 400
+    assert client.post("/api/auth/reset", json={"token": token, "password": "Newpass@12345!"}).status_code == 200
+    assert client.post("/api/auth/reset", json={"token": token, "password": "Newpass@12345!"}).status_code == 400
     assert client.get("/api/auth/me", headers=old).status_code == 401   # old sessions ended
-    assert login(client, "uploader@fgt.test", "Newpass12345").status_code == 200
+    assert login(client, "uploader@fgt.test", "Newpass@12345!").status_code == 200
 
 
 def test_invite_flow_and_user_limit(client):
@@ -159,7 +159,7 @@ def test_invite_flow_and_user_limit(client):
     assert r.status_code == 200 and "invite_url" in r.json()
     token = last_link("invite")
     assert client.get(f"/api/auth/invite/{token}").json()["email"] == "new@inv.test"
-    r = client.post("/api/auth/accept-invite", json={"token": token, "password": "Invited1234"})
+    r = client.post("/api/auth/accept-invite", json={"token": token, "password": "Welcome#Colleague2026!"})
     assert r.status_code == 200 and r.json()["user"]["role"] == "reviewer"
     client.cookies.clear()
     assert client.post("/api/users", json={"email": "third@inv.test", "name": "T", "role": "uploader"},
@@ -261,12 +261,12 @@ def test_platform_admin(client):
     assert client.get("/api/platform/orgs", headers=H(client, "admin@np.test")).status_code == 403
     # disabling a company blocks its users at once
     tok = last_link("invite")
-    client.post("/api/auth/accept-invite", json={"token": tok, "password": "Bosspass123"})
+    client.post("/api/auth/accept-invite", json={"token": tok, "password": "Str0ng#BrandAdmin2026!"})
     client.cookies.clear()
-    boss = H(client, "boss@newbrand.test", "Bosspass123")
+    boss = H(client, "boss@newbrand.test", "Str0ng#BrandAdmin2026!")
     client.patch(f"/api/platform/orgs/{nid}", json={"active": False}, headers=p)
     assert client.get("/api/scans", headers=boss).status_code == 401
-    assert login(client, "boss@newbrand.test", "Bosspass123").status_code == 401
+    assert login(client, "boss@newbrand.test", "Str0ng#BrandAdmin2026!").status_code == 401
 
 
 # ---------------- data controls ----------------
@@ -298,7 +298,7 @@ def test_retention_deletes_old_scans(client):
 
 def test_delete_user_erases_personal_data(client, co):
     r = client.post("/api/users", json={"email": "temp@plat.test", "name": "Temp Person", "role": "uploader",
-                                        "password": "Temppass123"}, headers=co["admin"])
+                                        "password": "Un1qu3#SecurePass2026!"}, headers=co["admin"])
     uid = r.json()["id"]
     assert client.delete(f"/api/users/{uid}", headers=co["admin"]).status_code == 200
     u = db.user_by_id(uid)
@@ -359,6 +359,164 @@ def test_invite_and_test_email(client, co, monkeypatch):
     assert "<!DOCTYPE html>" in test_mail["html"]
 
 
+def test_strict_rbac(client, co):
+    # 1. Upload scan as uploader
+    j = upload(client, co["uploader"], sku="RBAC-1").json()
+    sid = j["id"]
+    findings = j["result"]["findings"]
+    first_key = findings[0]["key"]
+
+    # 2. Uploader cannot decide findings
+    r = client.put(f"/api/scans/{sid}/findings/{first_key}", json={"decision": "ok"}, headers=co["uploader"])
+    assert r.status_code == 403
+    assert "reviewer role" in r.json()["detail"]
+
+    # 3. Uploader cannot approve or request changes
+    r = client.post(f"/api/scans/{sid}/review", json={"action": "approve"}, headers=co["uploader"])
+    assert r.status_code == 403
+    assert "reviewer role" in r.json()["detail"]
+
+    r = client.post(f"/api/scans/{sid}/review", json={"action": "request_changes", "note": "Fix"}, headers=co["uploader"])
+    assert r.status_code == 403
+    assert "reviewer role" in r.json()["detail"]
+
+    # 4. Uploader cannot access admin endpoints
+    assert client.get("/api/users", headers=co["uploader"]).status_code == 403
+    assert client.post("/api/users", json={"email": "hacker@plat.test", "name": "Hacker", "role": "admin"},
+                       headers=co["uploader"]).status_code == 403
+    assert client.patch("/api/org", json={"name": "Hacked Org"}, headers=co["uploader"]).status_code == 403
+    assert client.post("/api/org/test-email", headers=co["uploader"]).status_code == 403
+    assert client.get("/api/api-keys", headers=co["uploader"]).status_code == 403
+    assert client.post("/api/api-keys", json={"name": "Key"}, headers=co["uploader"]).status_code == 403
+    assert client.get("/api/webhooks", headers=co["uploader"]).status_code == 403
+    assert client.get("/api/audit", headers=co["uploader"]).status_code == 403
+    assert client.get("/api/org/export", headers=co["uploader"]).status_code == 403
+
+    # 5. Reviewer cannot access admin endpoints
+    assert client.get("/api/users", headers=co["reviewer"]).status_code == 403
+    assert client.post("/api/users", json={"email": "hacker2@plat.test", "name": "Hacker2", "role": "admin"},
+                       headers=co["reviewer"]).status_code == 403
+    assert client.patch("/api/org", json={"name": "Hacked Org 2"}, headers=co["reviewer"]).status_code == 403
+    assert client.post("/api/org/test-email", headers=co["reviewer"]).status_code == 403
+    assert client.get("/api/api-keys", headers=co["reviewer"]).status_code == 403
+    assert client.post("/api/api-keys", json={"name": "Key 2"}, headers=co["reviewer"]).status_code == 403
+    assert client.get("/api/webhooks", headers=co["reviewer"]).status_code == 403
+    assert client.get("/api/audit", headers=co["reviewer"]).status_code == 403
+    assert client.get("/api/org/export", headers=co["reviewer"]).status_code == 403
+
+    # 6. Reviewer CAN decide findings
+    r = client.put(f"/api/scans/{sid}/findings/{first_key}", json={"decision": "ok"}, headers=co["reviewer"])
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+
+    # 7. Non-platform admin (even company admin) cannot access platform endpoints
+    assert client.get("/api/platform/orgs", headers=co["admin"]).status_code == 403
+    assert client.post("/api/platform/orgs", json={"name": "Test", "admin_email": "t@t.com", "admin_name": "T"},
+                       headers=co["admin"]).status_code == 403
+    assert client.get("/api/platform/plans", headers=co["admin"]).status_code == 403
+
+    # 8. Uploader cross-submission guard:
+    # Create a 2nd uploader in the same company
+    r = client.post("/api/users", json={"email": "uploader2@plat.test", "name": "Uploader Two",
+                                        "role": "uploader", "password": "V3ry#Diff1cultPass2026!"}, headers=co["admin"])
+    u2_headers = H(client, "uploader2@plat.test", "V3ry#Diff1cultPass2026!")
+    # Uploader 2 cannot submit scan uploaded by Uploader 1
+    r = client.post(f"/api/scans/{sid}/review", json={"action": "submit"}, headers=u2_headers)
+    assert r.status_code == 409
+    assert "cannot be submitted" in r.json()["detail"]
+
+    # But Uploader 1 CAN submit their own scan
+    r = client.post(f"/api/scans/{sid}/review", json={"action": "submit"}, headers=co["uploader"])
+    assert r.status_code == 200
+    assert r.json()["review_status"] == "in_review"
+
+
+# ---------------- billing & razorpay ----------------
+
+def test_free_plan_stays_free_and_instant(client):
+    mailer.OUTBOX.clear()
+    r = client.post("/api/auth/register", json={
+        "company_name": "Freebie Corp",
+        "name": "Free User",
+        "email": "freebie@test.local",
+        "password": "V3ry#Compl3xTrial2026!",
+        "plan": "trial"
+    })
+    assert r.status_code == 200
+    data = r.json()
+    assert data["user"]["role"] == "admin"
+    assert data["user"]["org_name"] == "Freebie Corp"
+    assert data["user"]["email_verified"] is False
+    vtok = data.get("verify_token") or last_link("verify")
+    client.post("/api/auth/verify-email", json={"token": vtok})
+    # Verify free tier limits
+    h = H(client, "freebie@test.local", "V3ry#Compl3xTrial2026!")
+    org = client.get("/api/org", headers=h).json()
+    assert org["plan"] == "trial"
+    assert org["scan_quota"] == 100
+    assert org["user_limit"] == 3
+
+
+def test_razorpay_order_creation_and_verification(client, co):
+    mailer.OUTBOX.clear()
+    # 1. Billing config is public / accessible
+    cfg = client.get("/api/billing/config").json()
+    assert "plans" in cfg and "standard" in cfg["plans"]
+    assert cfg["currency"] == "INR"
+
+    # 2. Non-admin cannot create order (strict RBAC)
+    r = client.post("/api/billing/create-order", json={"plan": "standard"}, headers=co["uploader"])
+    assert r.status_code == 403
+
+    # 3. Admin creates order for standard plan
+    r = client.post("/api/billing/create-order", json={"plan": "standard"}, headers=co["admin"])
+    assert r.status_code == 200
+    order = r.json()
+    assert "order_id" in order and order["amount"] == 499900
+    assert order["plan"] == "standard"
+
+    # 4. Verify payment with signature
+    v = client.post("/api/billing/verify-payment", json={
+        "razorpay_order_id": order["order_id"],
+        "razorpay_payment_id": "pay_test_123456",
+        "razorpay_signature": "mock_signature",
+        "plan": "standard"
+    }, headers=co["admin"])
+    assert v.status_code == 200
+    assert v.json()["ok"] is True
+
+    # 5. Check org upgraded to standard
+    org = client.get("/api/org", headers=co["admin"]).json()
+    assert org["plan"] == "standard"
+    assert org["scan_quota"] == 2000
+    assert org["user_limit"] == 10
+    assert any("Receipt" in m["subject"] for m in mailer.OUTBOX)
+
+    # 6. Purchase a scan top-up pack (pack_50)
+    r_pack = client.post("/api/billing/create-order", json={"plan": "pack_50"}, headers=co["admin"])
+    assert r_pack.status_code == 200
+    pack_order = r_pack.json()
+    assert pack_order["amount"] == 399900
+
+    v_pack = client.post("/api/billing/verify-payment", json={
+        "razorpay_order_id": pack_order["order_id"],
+        "razorpay_payment_id": "pay_test_pack_50",
+        "razorpay_signature": "mock_signature",
+        "plan": "pack_50"
+    }, headers=co["admin"])
+    assert v_pack.status_code == 200
+
+    org_after = client.get("/api/org", headers=co["admin"]).json()
+    assert org_after["scan_quota"] == 2050  # 2000 + 50
+
+    # 7. Payment history check
+    hist = client.get("/api/billing/history", headers=co["admin"]).json()
+    assert len(hist) >= 2
+    assert any(p["plan"] == "standard" and p["status"] == "paid" for p in hist)
+    assert any(p["plan"] == "pack_50" and p["status"] == "paid" for p in hist)
+
+
+
 
 # ---------------- storage / workers ----------------
 
@@ -404,3 +562,192 @@ def test_rate_limit_counter_is_shared():
         ok, n = db.hit("t", "subject", 3, 60)
     assert ok and n == 3
     assert db.hit("t", "subject", 3, 60) == (False, 4)
+
+
+# ---------------- production auth & security suite ----------------
+
+def test_password_complexity_rules():
+    # 1. Under 12 chars
+    prob = auth.password_problem("Short@123")
+    assert prob and "at least 12 characters" in prob
+
+    # 2. Missing uppercase
+    prob = auth.password_problem("nouppercase@12345")
+    assert prob and "uppercase" in prob
+
+    # 3. Missing lowercase
+    prob = auth.password_problem("NOLOWERCASE@12345")
+    assert prob and "lowercase" in prob
+
+    # 4. Missing digits
+    prob = auth.password_problem("NoDigitsHereAtAll!@#")
+    assert prob and ("number" in prob or "digit" in prob)
+
+    # 5. Missing special symbols
+    prob = auth.password_problem("NoSpecialSymbols1234")
+    assert prob and "symbol" in prob
+
+    # 6. Common / leaked password
+    prob = auth.password_problem("Password@1234!")
+    assert prob and "common" in prob
+
+    # 7. Easily guessable with email / name
+    prob = auth.password_problem("AlexanderSuper@123", user_context={"name": "Alexander", "email": "alex@corp.test"})
+    assert prob and ("email" in prob or "name" in prob)
+
+    prob2 = auth.password_problem("MyCompanyPass@123", user_context={"name": "Bob", "email": "bob@mycompany.test"})
+    assert prob2 and ("email" in prob2 or "name" in prob2)
+
+    # 8. Valid strong password
+    assert auth.password_problem("V3ry$ecureP@ssw0rd!2026") is None
+
+
+def test_login_constant_time_and_enumeration_prevention(client):
+    # Non-existent email returns generic 401
+    r_ghost = client.post("/api/auth/login", json={"email": "nonexistent@example.com", "password": "WrongPassword@123!"})
+    assert r_ghost.status_code == 401
+    assert r_ghost.json()["detail"] == "Invalid credentials."
+
+    # Existing user with wrong password returns the exact same generic 401
+    new_org(users=("admin",), prefix="enumcheck")
+    r_wrong = client.post("/api/auth/login", json={"email": "admin@enumcheck.test", "password": "WrongPassword@123!"})
+    assert r_wrong.status_code == 401
+    assert r_wrong.json()["detail"] == "Invalid credentials."
+
+
+def test_login_rate_limiting_and_lockout(client):
+    # Multiple failed logins from same IP trigger rate limit (5 attempts max per 5 min)
+    target_email = "ratelimit_target@test.local"
+    for _ in range(5):
+        r = client.post("/api/auth/login", json={"email": target_email, "password": "WrongPassword@123!"})
+        assert r.status_code == 401
+    # 6th attempt is throttled
+    r_blocked = client.post("/api/auth/login", json={"email": target_email, "password": "WrongPassword@123!"})
+    assert r_blocked.status_code == 429
+    assert "Too many failed attempts" in r_blocked.json()["detail"]
+    # Clear rate limits so other tests aren't locked out
+    with db.engine().begin() as c:
+        c.execute(db.rate_limits.delete())
+
+
+def test_email_verification_flow(client):
+    mailer.OUTBOX.clear()
+    reg_email = "verify_me@flow.test"
+    reg_pass = "V3ry$ecureEmailVerif#1"
+    r = client.post("/api/auth/register", json={
+        "company_name": "VerifyFlow Corp",
+        "name": "Verify User",
+        "email": reg_email,
+        "password": reg_pass,
+        "plan": "trial"
+    })
+    assert r.status_code == 200
+    token = r.json().get("verify_token") or last_link("verify")
+    assert token is not None
+
+    # Unverified user cannot log in
+    r_login_unverified = client.post("/api/auth/login", json={"email": reg_email, "password": reg_pass})
+    assert r_login_unverified.status_code == 403
+    assert "verify your email" in r_login_unverified.json()["detail"]
+
+    # Resend verification
+    r_resend = client.post("/api/auth/resend-verification", json={"email": reg_email})
+    assert r_resend.status_code == 200
+    new_token = last_link("verify")
+
+    # Invalid token fails
+    r_bad = client.post("/api/auth/verify-email", json={"token": "invalid_or_expired_token_xyz"})
+    assert r_bad.status_code == 400
+
+    # Valid token succeeds
+    r_ok = client.post("/api/auth/verify-email", json={"token": new_token})
+    assert r_ok.status_code == 200
+    assert "Email verified successfully" in r_ok.json()["message"]
+
+    # Now login succeeds
+    r_login_verified = client.post("/api/auth/login", json={"email": reg_email, "password": reg_pass})
+    assert r_login_verified.status_code == 200
+    assert r_login_verified.json()["user"]["email_verified"] is True
+
+
+def test_password_reset_ttl_and_session_invalidation(client):
+    mailer.OUTBOX.clear()
+    new_org(users=("admin",), prefix="rstcheck")
+    email = "admin@rstcheck.test"
+    pw_old = PW
+    pw_new = "BrandN3w#SecurePass2026!"
+
+    # Log in and obtain an active session
+    active_headers = H(client, email, pw_old)
+    assert client.get("/api/auth/me", headers=active_headers).status_code == 200
+
+    # Request reset
+    r_forgot = client.post("/api/auth/forgot", json={"email": email})
+    assert r_forgot.status_code == 200
+    token = last_link("reset")
+
+    # Perform reset
+    r_reset = client.post("/api/auth/reset", json={"token": token, "password": pw_new})
+    assert r_reset.status_code == 200
+
+    # All prior sessions must be invalidated immediately
+    assert client.get("/api/auth/me", headers=active_headers).status_code == 401
+
+    # Single-use token: reuse must fail
+    r_reuse = client.post("/api/auth/reset", json={"token": token, "password": pw_new})
+    assert r_reuse.status_code == 400
+
+    # Login works only with new password
+    assert client.post("/api/auth/login", json={"email": email, "password": pw_old}).status_code == 401
+    assert client.post("/api/auth/login", json={"email": email, "password": pw_new}).status_code == 200
+
+
+def test_authenticated_change_password(client):
+    with db.engine().begin() as c:
+        c.execute(db.rate_limits.delete())
+    new_org(users=("admin",), prefix="chgcheck")
+    email = "admin@chgcheck.test"
+    pw_old = PW
+    pw_new = "Ch@ngedSecurePass999!"
+
+    headers = H(client, email, pw_old)
+
+    # Wrong current password fails
+    r_bad_curr = client.post("/api/auth/password", json={
+        "current": "WrongPassword@123!",
+        "new": pw_new
+    }, headers=headers)
+    assert r_bad_curr.status_code == 400
+    assert "Current password is wrong" in r_bad_curr.json()["detail"]
+
+    # Weak new password fails
+    r_weak = client.post("/api/auth/password", json={
+        "current": pw_old,
+        "new": "short"
+    }, headers=headers)
+    assert r_weak.status_code == 400
+
+    # Successful change
+    r_ok = client.post("/api/auth/password", json={
+        "current": pw_old,
+        "new": pw_new
+    }, headers=headers)
+    assert r_ok.status_code == 200
+
+    # Old session is invalidated
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+    # Login works with new password
+    assert client.post("/api/auth/login", json={"email": email, "password": pw_new}).status_code == 200
+
+
+def test_registration_honeypot_bot_prevention(client):
+    r = client.post("/api/auth/register", json={
+        "company_name": "Spambot Inc",
+        "name": "Botty McBot",
+        "email": "bot@spambot.test",
+        "password": "V3ry$ecureBotPass123!",
+        "website": "http://spammy-link.com"
+    })
+    assert r.status_code == 400
+    assert "Registration rejected" in r.json()["detail"]

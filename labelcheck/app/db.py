@@ -52,6 +52,7 @@ users = Table("users", md,
               Column("password_hash", String(255), nullable=False),
               Column("role", String(20), nullable=False),  # admin | reviewer | uploader
               Column("active", Boolean, default=True, nullable=False),
+              Column("email_verified", Boolean, nullable=False, server_default="1"),
               Column("terms_accepted_at", DateTime(timezone=True)),
               Column("created_at", DateTime(timezone=True), default=now),
               Column("is_platform_admin", Boolean, nullable=False, server_default="0"),
@@ -210,11 +211,30 @@ webhook_deliveries = Table("webhook_deliveries", md,
                            Column("delivered_at", DateTime(timezone=True)),
                            Index("ix_whd_due", "status", "next_attempt_at"))
 
+payments = Table("payments", md,
+                 Column("id", Integer, primary_key=True),
+                 Column("org_id", ForeignKey("orgs.id"), nullable=False, index=True),
+                 Column("user_id", ForeignKey("users.id")),
+                 Column("order_id", String(64), nullable=False, unique=True),
+                 Column("payment_id", String(64)),
+                 Column("amount_paise", Integer, nullable=False),
+                 Column("currency", String(10), nullable=False, server_default="INR"),
+                 Column("plan", String(40), nullable=False),
+                 Column("status", String(20), nullable=False, server_default="created"),
+                 Column("created_at", DateTime(timezone=True), default=now),
+                 Column("paid_at", DateTime(timezone=True)))
+
 PLANS = {
-    "trial": {"label": "Trial", "scans": 100, "users": 3},
-    "standard": {"label": "Standard", "scans": 2000, "users": 10},
-    "business": {"label": "Business", "scans": 10000, "users": 50},
-    "enterprise": {"label": "Enterprise", "scans": None, "users": None},
+    "trial": {"label": "Trial", "scans": 100, "users": 3, "price_inr": 0},
+    "standard": {"label": "Standard", "scans": 2000, "users": 10, "price_inr": 4999},
+    "business": {"label": "Business", "scans": 10000, "users": 50, "price_inr": 14999},
+    "enterprise": {"label": "Enterprise", "scans": None, "users": None, "price_inr": None},
+}
+
+PACKS = {
+    "pack_1": {"label": "Single Scan", "scans": 1, "price_inr": 99},
+    "pack_50": {"label": "Batch Pack (50)", "scans": 50, "price_inr": 3999},
+    "pack_250": {"label": "Agency Pack (250)", "scans": 250, "price_inr": 14999},
 }
 
 _engine = None
@@ -409,11 +429,12 @@ def release_scans(org_id, n):
 
 # ---------------- users ----------------
 
-def create_user(org_id, email, name, password_hash, role, platform_admin=False):
+def create_user(org_id, email, name, password_hash, role, platform_admin=False, email_verified=True):
     with engine().begin() as c:
         return c.execute(insert(users).values(
             org_id=org_id, email=email.lower().strip(), name=name, password_hash=password_hash,
-            role=role, active=True, created_at=now(), is_platform_admin=platform_admin)).inserted_primary_key[0]
+            role=role, active=True, email_verified=email_verified, created_at=now(),
+            is_platform_admin=platform_admin)).inserted_primary_key[0]
 
 
 def user_by_email(email):
@@ -426,8 +447,8 @@ def user_by_id(uid):
         return _row(c.execute(select(users).where(users.c.id == uid)).first())
 
 
-USER_COLS = [users.c.id, users.c.email, users.c.name, users.c.role, users.c.active, users.c.created_at,
-             users.c.totp_enabled, users.c.last_login_at, users.c.is_platform_admin]
+USER_COLS = [users.c.id, users.c.email, users.c.name, users.c.role, users.c.active, users.c.email_verified,
+             users.c.created_at, users.c.totp_enabled, users.c.last_login_at, users.c.is_platform_admin]
 
 
 def list_users(org_id, limit=None, offset=0):
@@ -501,13 +522,14 @@ def delete_user_sessions(user_id):
         c.execute(sessions.delete().where(sessions.c.user_id == user_id))
 
 
-def create_token(token_hash, user_id, kind, hours):
+def create_token(token_hash, user_id, kind, hours=None, minutes=None):
     with engine().begin() as c:
         # a new token of the same kind replaces older unused ones
         c.execute(update(tokens).where(tokens.c.user_id == user_id, tokens.c.kind == kind,
                                        tokens.c.used_at.is_(None)).values(used_at=now()))
+        delta = timedelta(minutes=minutes) if minutes is not None else timedelta(hours=hours or 1)
         c.execute(insert(tokens).values(token_hash=token_hash, user_id=user_id, kind=kind,
-                                        created_at=now(), expires_at=now() + timedelta(hours=hours)))
+                                        created_at=now(), expires_at=now() + delta))
 
 
 def use_token(token_hash, kind):
@@ -1098,3 +1120,40 @@ def purge_old_deliveries(days=30):
         return c.execute(delete(webhook_deliveries).where(
             webhook_deliveries.c.status.in_(("delivered", "failed")),
             webhook_deliveries.c.created_at < now() - timedelta(days=days))).rowcount
+
+
+# ---------------- payments & billing ----------------
+
+def create_payment(org_id, user_id, order_id, amount_paise, plan, currency="INR"):
+    with engine().begin() as c:
+        return c.execute(insert(payments).values(
+            org_id=org_id, user_id=user_id, order_id=order_id,
+            amount_paise=amount_paise, currency=currency, plan=plan,
+            status="created", created_at=now())).inserted_primary_key[0]
+
+
+def get_payment_by_order(order_id):
+    with engine().connect() as c:
+        r = c.execute(select(payments).where(payments.c.order_id == order_id)).first()
+        return _clean(_row(r)) if r else None
+
+
+def update_payment(order_id, payment_id, status="paid"):
+    with engine().begin() as c:
+        vals = {"status": status, "payment_id": payment_id}
+        if status == "paid":
+            vals["paid_at"] = now()
+        c.execute(update(payments).where(payments.c.order_id == order_id).values(**vals))
+
+
+def list_payments(org_id, limit=20, offset=0):
+    with engine().connect() as c:
+        return [_clean(_row(r)) for r in c.execute(
+            select(payments).where(payments.c.org_id == org_id)
+            .order_by(payments.c.id.desc()).offset(offset).limit(limit))]
+
+
+def count_payments(org_id):
+    with engine().connect() as c:
+        return int(c.execute(select(func.count(payments.c.id)).where(payments.c.org_id == org_id)).scalar() or 0)
+
