@@ -93,6 +93,8 @@ class Settings:
             out.append("LABELCHECK_ALLOW_PRIVATE_FETCH must not be set in production (allows internal requests).")
         if self.storage == "s3" and not self.s3_bucket:
             out.append("LABELCHECK_S3_BUCKET is required when LABELCHECK_STORAGE=s3.")
+        if not self.razorpay_key_id or not self.razorpay_key_secret or not self.razorpay_webhook_secret:
+            out.append("FATAL: Missing Razorpay production credentials (LABELCHECK_RAZORPAY_KEY_ID, LABELCHECK_RAZORPAY_KEY_SECRET, LABELCHECK_RAZORPAY_WEBHOOK_SECRET). Aborting startup.")
         return out
 
     def warnings(self):

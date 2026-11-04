@@ -5,17 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LabelCheck</title>
 <link rel="stylesheet" href="/app.css">
+<script src="/theme-init.js"></script>
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
-<script>
-  (function() {
-    try {
-      const saved = localStorage.getItem("labelcheck_theme");
-      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      const theme = (saved === "light" || saved === "dark") ? saved : (prefersDark ? "dark" : "light");
-      document.documentElement.setAttribute("data-theme", theme);
-    } catch (_) {}
-  })();
-</script>
 </head>
 <body>
 
@@ -428,6 +419,8 @@
         <div class="check"><input type="checkbox" id="embossed"> <span>Text is blown, moulded, embossed or perforated</span></div>
         <div class="check"><input type="checkbox" id="imported"> <span>Imported product</span></div>
         <details class="sub"><summary>E-commerce listing (optional)</summary>
+          <label for="listing-url">Listing URL</label>
+          <input type="url" id="listing-url" placeholder="https://www.amazon.in/dp/... or https://www.flipkart.com/..." maxlength="2000">
           <label for="listing">E-commerce listing text</label>
           <textarea id="listing" placeholder="Paste product title, price, net quantity, seller, country of origin..."></textarea>
           <div class="hint">Check that the listing displays mandatory declarations and matches the label (Rule 6(10)).</div>

@@ -179,20 +179,48 @@ def verify_totp(user, code, secret=None):
 
 # ---------------- login lockout (shared through the database) ----------------
 
-def _lock_key(email, ip):
-    return f"{email.lower().strip()}|{ip}"
+ACCOUNT_LOGIN_FAILS, ACCOUNT_LOGIN_WINDOW = 5, 15 * 60
+IP_LOGIN_FAILS, IP_LOGIN_WINDOW = 100, 15 * 60
+LOGIN_FAILS, LOGIN_WINDOW = 5, 15 * 60
+
+
+def is_rate_limit_exempt(ip: str) -> bool:
+    """Exempt local loopback, CI, and test environments from aggregate IP rate limits."""
+    return ip in ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+def is_account_locked(email: str) -> bool:
+    return db.count_hits("login-fail-user", email.lower().strip(), ACCOUNT_LOGIN_WINDOW) >= ACCOUNT_LOGIN_FAILS
+
+
+def is_ip_locked(ip: str) -> bool:
+    if is_rate_limit_exempt(ip):
+        return False
+    return db.count_hits("login-fail-ip", ip, IP_LOGIN_WINDOW) >= IP_LOGIN_FAILS
+
+
+def record_login_fail(email: str, ip: str):
+    clean_email = email.lower().strip()
+    db.hit("login-fail-user", clean_email, ACCOUNT_LOGIN_FAILS, ACCOUNT_LOGIN_WINDOW)
+    if not is_rate_limit_exempt(ip):
+        db.hit("login-fail-ip", ip, IP_LOGIN_FAILS, IP_LOGIN_WINDOW)
+
+
+def clear_login_fails(email: str, ip: str):
+    clean_email = email.lower().strip()
+    db.clear_hits("login-fail-user", clean_email, ACCOUNT_LOGIN_WINDOW)
 
 
 def locked(email, ip):
-    return db.count_hits("login-fail", _lock_key(email, ip), LOGIN_WINDOW) >= LOGIN_FAILS
+    return is_account_locked(email) or is_ip_locked(ip)
 
 
 def record_fail(email, ip):
-    db.hit("login-fail", _lock_key(email, ip), LOGIN_FAILS, LOGIN_WINDOW)
+    record_login_fail(email, ip)
 
 
 def clear_fails(email, ip):
-    db.clear_hits("login-fail", _lock_key(email, ip), LOGIN_WINDOW)
+    clear_login_fails(email, ip)
 
 
 def rate_limit(name, subject, limit, window, message="Too many requests. Please slow down."):
@@ -249,6 +277,8 @@ def _api_key_principal(raw, request):
 # ---------------- dependencies ----------------
 
 def _credentials(request: Request):
+    if "session_token" in request.query_params:
+        raise HTTPException(400, "Authentication tokens in URL query parameters are forbidden.")
     key = request.headers.get("x-api-key")
     if key:
         return key, "api_key"
@@ -256,9 +286,6 @@ def _credentials(request: Request):
     if h.lower().startswith("bearer "):
         t = h[7:].strip()
         return t, "api_key" if t.startswith("lc_") else "bearer"
-    q_token = request.query_params.get("session_token")
-    if q_token:
-        return q_token, "bearer"
     return request.cookies.get(COOKIE), "cookie"
 
 

@@ -42,7 +42,11 @@ orgs = Table("orgs", md,
              Column("user_limit", Integer),            # NULL = plan default
              Column("retention_days", Integer),        # NULL = keep forever
              Column("require_2fa", Boolean, nullable=False, server_default="0"),
-             Column("active", Boolean, nullable=False, server_default="1"))
+             Column("active", Boolean, nullable=False, server_default="1"),
+             Column("purchased_addon_credits", Integer, nullable=False, server_default="0"),
+             Column("current_period_start", DateTime(timezone=True)),
+             Column("current_period_end", DateTime(timezone=True)),
+             Column("subscription_status", String(20), nullable=False, server_default="active"))
 
 users = Table("users", md,
               Column("id", Integer, primary_key=True),
@@ -341,12 +345,42 @@ def _clean(d):
 
 def create_org(name, plan="trial"):
     with engine().begin() as c:
-        return c.execute(insert(orgs).values(name=name, plan=plan, created_at=now())).inserted_primary_key[0]
+        return c.execute(insert(orgs).values(
+            name=name, plan=plan, created_at=now(),
+            purchased_addon_credits=0, subscription_status="active"
+        )).inserted_primary_key[0]
+
+
+def check_subscription_status(org):
+    """If a paid subscription has passed current_period_end, automatically downgrade to trial."""
+    if not org or org.get("plan") in ("trial", "enterprise"):
+        return org
+    end_time = org.get("current_period_end")
+    if end_time:
+        end_dt = datetime.fromisoformat(end_time) if isinstance(end_time, str) else _aware(end_time)
+        if end_dt and end_dt < now():
+            update_org(org["id"], plan="trial", scan_quota=PLANS["trial"]["scans"],
+                       user_limit=PLANS["trial"]["users"], subscription_status="expired")
+            log_event(org["id"], None, "subscription_expired", "org", org["id"],
+                      detail={"downgraded_to": "trial", "expired_at": _iso(end_dt)})
+            org["plan"] = "trial"
+            org["scan_quota"] = PLANS["trial"]["scans"]
+            org["user_limit"] = PLANS["trial"]["users"]
+            org["subscription_status"] = "expired"
+    return org
 
 
 def get_org(org_id):
     with engine().connect() as c:
-        return _clean(_row(c.execute(select(orgs).where(orgs.c.id == org_id)).first()))
+        org = _clean(_row(c.execute(select(orgs).where(orgs.c.id == org_id)).first()))
+    if org:
+        org = check_subscription_status(org)
+        plan_meta = PLANS.get(org.get("plan"), PLANS["trial"])
+        if org.get("scan_quota") is None and plan_meta.get("scans") is not None:
+            org["scan_quota"] = plan_meta["scans"]
+        if org.get("user_limit") is None and plan_meta.get("users") is not None:
+            org["user_limit"] = plan_meta["users"]
+    return org
 
 
 def update_org(org_id, **values):
@@ -355,10 +389,21 @@ def update_org(org_id, **values):
 
 
 def org_limits(org):
+    org = check_subscription_status(org)
     plan = PLANS.get(org["plan"], PLANS["trial"])
-    return {"plan": org["plan"], "plan_label": plan["label"],
-            "scan_quota": org["scan_quota"] if org["scan_quota"] is not None else plan["scans"],
-            "user_limit": org["user_limit"] if org["user_limit"] is not None else plan["users"]}
+    base_allowance = org["scan_quota"] if org["scan_quota"] is not None else plan["scans"]
+    addon_credits = org.get("purchased_addon_credits") or 0
+    return {
+        "plan": org["plan"],
+        "plan_label": plan["label"],
+        "scan_quota": base_allowance,
+        "plan_base_allowance": base_allowance,
+        "purchased_addon_credits": addon_credits,
+        "user_limit": org["user_limit"] if org["user_limit"] is not None else plan["users"],
+        "current_period_start": org.get("current_period_start"),
+        "current_period_end": org.get("current_period_end"),
+        "subscription_status": org.get("subscription_status", "active"),
+    }
 
 
 def list_orgs(limit=None, offset=0):
@@ -402,9 +447,10 @@ def usage_history(org_id, months=12):
 
 
 def reserve_scans(org_id, n):
-    """Count n scans against this month's quota, atomically. Returns (ok, used_after, quota)."""
+    """Count n scans against monthly quota and add-on credits, atomically. Returns (ok, used_after, quota)."""
     org = get_org(org_id)
-    quota = org_limits(org)["scan_quota"]
+    limits = org_limits(org)
+    quota = limits["scan_quota"]
     m = month_key()
     with engine().begin() as c:
         cur = c.execute(select(usage.c.scans).where(usage.c.org_id == org_id, usage.c.month == m)
@@ -412,11 +458,35 @@ def reserve_scans(org_id, n):
         if cur is None:
             cur = 0
             c.execute(insert(usage).values(org_id=org_id, month=m, scans=0))
-        if quota is not None and cur + n > quota:
-            return False, cur, quota
-        c.execute(update(usage).where(usage.c.org_id == org_id, usage.c.month == m)
-                  .values(scans=usage.c.scans + n))
-    return True, cur + n, quota
+
+        # Unlimited plans (enterprise)
+        if quota is None or org.get("plan") == "enterprise":
+            c.execute(update(usage).where(usage.c.org_id == org_id, usage.c.month == m)
+                      .values(scans=usage.c.scans + n))
+            return True, cur + n, None
+
+        # Lock org row to check and deduct purchased_addon_credits
+        org_row = c.execute(select(orgs).where(orgs.c.id == org_id).with_for_update()).first()
+        org_dict = _clean(_row(org_row)) if org_row else {}
+        addon_credits = org_dict.get("purchased_addon_credits") or 0
+
+        # Priority: Consume from monthly base allowance first
+        base_remaining = max(0, quota - cur)
+        from_base = min(n, base_remaining)
+        excess = n - from_base
+
+        if excess > 0:
+            if addon_credits < excess:
+                total_available = quota + addon_credits
+                return False, cur, total_available
+            c.execute(update(orgs).where(orgs.c.id == org_id)
+                      .values(purchased_addon_credits=orgs.c.purchased_addon_credits - excess))
+
+        if from_base > 0:
+            c.execute(update(usage).where(usage.c.org_id == org_id, usage.c.month == m)
+                      .values(scans=usage.c.scans + from_base))
+
+    return True, cur + from_base, quota + addon_credits
 
 
 def release_scans(org_id, n):
@@ -1156,4 +1226,86 @@ def list_payments(org_id, limit=20, offset=0):
 def count_payments(org_id):
     with engine().connect() as c:
         return int(c.execute(select(func.count(payments.c.id)).where(payments.c.org_id == org_id)).scalar() or 0)
+
+
+def settle_payment(order_id, payment_id):
+    """
+    Atomically transition payment status from 'created' to 'paid'.
+    Ensures idempotent processing and eliminates double-credit race condition between
+    browser verification and webhook callbacks.
+    Returns (already_paid: bool, payment: dict, plan_applied: bool).
+    """
+    with engine().begin() as c:
+        # Atomic conditional update: only update if status == 'created'
+        res = c.execute(
+            update(payments)
+            .where(payments.c.order_id == order_id, payments.c.status == "created")
+            .values(status="paid", payment_id=payment_id, paid_at=now())
+        )
+        was_updated = res.rowcount > 0
+
+        p = c.execute(select(payments).where(payments.c.order_id == order_id)).first()
+        if not p:
+            return False, None, False
+        p_dict = _clean(_row(p))
+
+        if not was_updated:
+            return True, p_dict, False
+
+        org_id = p_dict["org_id"]
+        plan_key = p_dict["plan"]
+
+        org_row = c.execute(select(orgs).where(orgs.c.id == org_id).with_for_update()).first()
+        if not org_row:
+            return False, p_dict, False
+        org_dict = _clean(_row(org_row))
+
+        from .api.billing import PLANS_DATA
+        plan_info = PLANS_DATA.get(plan_key)
+        if plan_info:
+            if plan_info["type"] == "subscription":
+                # Time-bound subscription (30 days billing cycle)
+                period_start = now()
+                period_end = now() + timedelta(days=30)
+                c.execute(
+                    update(orgs)
+                    .where(orgs.c.id == org_id)
+                    .values(
+                        plan=plan_key,
+                        scan_quota=plan_info["scans"],
+                        user_limit=plan_info["users"],
+                        current_period_start=period_start,
+                        current_period_end=period_end,
+                        subscription_status="active"
+                    )
+                )
+            else:
+                # Add-on scan pack: top-up purchased_addon_credits ONLY (do not touch base monthly quota)
+                is_unlimited = org_dict.get("plan") == "enterprise" or (PLANS.get(org_dict.get("plan"), {}).get("scans") is None and org_dict.get("scan_quota") is None)
+                if not is_unlimited:
+                    c.execute(
+                        update(orgs)
+                        .where(orgs.c.id == org_id)
+                        .values(purchased_addon_credits=orgs.c.purchased_addon_credits + plan_info["scans"])
+                    )
+
+        return False, p_dict, True
+
+
+def expire_subscriptions():
+    """Find all expired paid subscriptions and downgrade them to trial."""
+    with engine().connect() as c:
+        rows = c.execute(
+            select(orgs.c.id, orgs.c.current_period_end)
+            .where(orgs.c.plan.in_(("standard", "business")),
+                   orgs.c.current_period_end.is_not(None),
+                   orgs.c.current_period_end < now())
+        ).all()
+    count = 0
+    for r in rows:
+        update_org(r[0], plan="trial", scan_quota=PLANS["trial"]["scans"],
+                   user_limit=PLANS["trial"]["users"], subscription_status="expired")
+        log_event(r[0], None, "subscription_expired_housekeeping", "org", r[0])
+        count += 1
+    return count
 

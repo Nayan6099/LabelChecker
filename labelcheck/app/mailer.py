@@ -135,6 +135,24 @@ def password_reset(to, name, url):
     send(to, subject, text, html=html)
 
 
+def password_reset_by_admin(to, name, admin_name="an administrator"):
+    safe_name = html_lib.escape(name)
+    safe_admin = html_lib.escape(admin_name)
+    subject = "Your LabelCheck password has been reset"
+    text = (
+        f"Hello {name},\n\n"
+        f"Your LabelCheck account password was reset by {admin_name}.\n"
+        f"If you did not authorize this change, please contact your organization administrator immediately.\n"
+    )
+    body_html = f"""
+      <p>Hello <b>{safe_name}</b>,</p>
+      <p>Your LabelCheck account password was recently reset by <b>{safe_admin}</b>.</p>
+      <p>If you did not expect this change, please contact your organization administrator immediately to secure your account.</p>
+    """
+    html = _base_html(subject, body_html)
+    send(to, subject, text, html=html)
+
+
 def verify_email(to, name, url):
     safe_name = html_lib.escape(name)
     subject = "Verify your email address for LabelCheck"

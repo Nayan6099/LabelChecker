@@ -105,13 +105,17 @@ def test_production_refuses_unsafe_settings(monkeypatch):
     monkeypatch.setenv("LABELCHECK_COOKIE_SECURE", "0")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("LABELCHECK_SECRET_KEY", raising=False)
+    monkeypatch.delenv("LABELCHECK_RAZORPAY_KEY_ID", raising=False)
     probs = " ".join(Settings().problems())
-    for word in ("COOKIE_SECURE", "DATABASE_URL", "SECRET_KEY", "PUBLIC_URL"):
+    for word in ("COOKIE_SECURE", "DATABASE_URL", "SECRET_KEY", "PUBLIC_URL", "Razorpay"):
         assert word in probs
     monkeypatch.setenv("LABELCHECK_COOKIE_SECURE", "1")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@db/lc")
     monkeypatch.setenv("LABELCHECK_SECRET_KEY", "x" * 40)
     monkeypatch.setenv("LABELCHECK_PUBLIC_URL", "https://labelcheck.example.com")
+    monkeypatch.setenv("LABELCHECK_RAZORPAY_KEY_ID", "rzp_live_1234567890")
+    monkeypatch.setenv("LABELCHECK_RAZORPAY_KEY_SECRET", "secret1234567890")
+    monkeypatch.setenv("LABELCHECK_RAZORPAY_WEBHOOK_SECRET", "webhooksecret1234567890")
     assert Settings().problems() == []
 
 
@@ -444,10 +448,11 @@ def test_free_plan_stays_free_and_instant(client):
     })
     assert r.status_code == 200
     data = r.json()
-    assert data["user"]["role"] == "admin"
-    assert data["user"]["org_name"] == "Freebie Corp"
-    assert data["user"]["email_verified"] is False
-    vtok = data.get("verify_token") or last_link("verify")
+    assert data.get("success") is True
+    u = db.user_by_email("freebie@test.local")
+    assert u["role"] == "admin"
+    assert u["email_verified"] is False
+    vtok = last_link("verify")
     client.post("/api/auth/verify-email", json={"token": vtok})
     # Verify free tier limits
     h = H(client, "freebie@test.local", "V3ry#Compl3xTrial2026!")
@@ -457,7 +462,11 @@ def test_free_plan_stays_free_and_instant(client):
     assert org["user_limit"] == 3
 
 
-def test_razorpay_order_creation_and_verification(client, co):
+def test_razorpay_order_creation_and_verification(client, co, monkeypatch):
+    import hmac
+    import hashlib
+    from app.config import settings
+    monkeypatch.setattr(settings, "razorpay_key_secret", "test_secret_for_platform")
     mailer.OUTBOX.clear()
     # 1. Billing config is public / accessible
     cfg = client.get("/api/billing/config").json()
@@ -476,10 +485,11 @@ def test_razorpay_order_creation_and_verification(client, co):
     assert order["plan"] == "standard"
 
     # 4. Verify payment with signature
+    sig1 = hmac.new(b"test_secret_for_platform", f"{order['order_id']}|pay_test_123456".encode("utf-8"), hashlib.sha256).hexdigest()
     v = client.post("/api/billing/verify-payment", json={
         "razorpay_order_id": order["order_id"],
         "razorpay_payment_id": "pay_test_123456",
-        "razorpay_signature": "mock_signature",
+        "razorpay_signature": sig1,
         "plan": "standard"
     }, headers=co["admin"])
     assert v.status_code == 200
@@ -498,16 +508,18 @@ def test_razorpay_order_creation_and_verification(client, co):
     pack_order = r_pack.json()
     assert pack_order["amount"] == 399900
 
+    sig_pack = hmac.new(b"test_secret_for_platform", f"{pack_order['order_id']}|pay_test_pack_50".encode("utf-8"), hashlib.sha256).hexdigest()
     v_pack = client.post("/api/billing/verify-payment", json={
         "razorpay_order_id": pack_order["order_id"],
         "razorpay_payment_id": "pay_test_pack_50",
-        "razorpay_signature": "mock_signature",
+        "razorpay_signature": sig_pack,
         "plan": "pack_50"
     }, headers=co["admin"])
     assert v_pack.status_code == 200
 
     org_after = client.get("/api/org", headers=co["admin"]).json()
-    assert org_after["scan_quota"] == 2050  # 2000 + 50
+    assert org_after["scan_quota"] == 2000
+    assert org_after["purchased_addon_credits"] == 50
 
     # 7. Payment history check
     hist = client.get("/api/billing/history", headers=co["admin"]).json()

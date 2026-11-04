@@ -108,6 +108,7 @@ def maintenance():
         deleted += 1
     out["retention_deleted"] = deleted
     out["webhook_deliveries_purged"] = db.purge_old_deliveries()
+    out["subscriptions_expired"] = db.expire_subscriptions()
     QUEUE.labels("queued").set(0)
     QUEUE.labels("processing").set(0)
     for k, v in db.queue_depth().items():

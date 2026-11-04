@@ -1,5 +1,6 @@
 """Scans: upload, results, files, reports, compare, delete, and the review workflow."""
 import math
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -28,11 +29,23 @@ def make_opts(product_name, sku, category, pw, ph, embossed, imported, auto_stra
             "auto_straighten": flag(auto_straighten), "pdf_page": int(num(pdf_page) or 1)}
 
 
-def make_listing(text, url=None):
-    text = (text or "").strip()[:60000]
-    if not text:
+URL_RE = re.compile(r"^https?://[^\s/$.?#].[^\s]*$", re.IGNORECASE)
+
+
+def make_listing(text=None, url=None):
+    clean_text = (text or "").strip()[:60000]
+    clean_url = (url or "").strip()[:2000] if url else None
+    if clean_url:
+        if not URL_RE.match(clean_url):
+            raise HTTPException(400, "Invalid listing_url: must be a valid http or https URL.")
+    if not clean_text and not clean_url:
         return None
-    return {"text": text}
+    out = {}
+    if clean_text:
+        out["text"] = clean_text
+    if clean_url:
+        out["url"] = clean_url
+    return out
 
 
 def check_file(data, name):

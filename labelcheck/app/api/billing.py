@@ -4,9 +4,11 @@ Keeps Free / Trial plan intact with zero payment.
 """
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import time
+from datetime import timedelta
 from typing import Optional
 
 import httpx
@@ -120,22 +122,27 @@ async def _create_razorpay_order(amount_paise: int, receipt: str, notes: dict) -
 
 
 def _verify_signature(order_id: str, payment_id: str, signature: str) -> bool:
-    """Cryptographic HMAC SHA256 verification of Razorpay signature."""
+    """Cryptographic HMAC SHA256 verification of Razorpay signature.
+    Never falls back to permissive dummy mocks or hardcoded test signatures."""
+    if not settings.razorpay_key_secret:
+        log.error("Payment verification failed: LABELCHECK_RAZORPAY_KEY_SECRET is not configured.")
+        raise HTTPException(500, "Payment gateway credentials not configured.")
     payload = f"{order_id}|{payment_id}".encode()
-    has_secret = bool(settings.razorpay_key_secret)
-    is_placeholder = any(x in (settings.razorpay_key_secret or "") for x in ("xxx", "placeholder"))
-    if has_secret and not is_placeholder:
-        expected = hmac.new(settings.razorpay_key_secret.encode(), payload, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected, signature)
-    # In test/mock mode
-    mock_expected = hmac.new(b"mock_secret", payload, hashlib.sha256).hexdigest()
-    return signature == "mock_signature" or hmac.compare_digest(mock_expected, signature) or signature == "test_ok"
+    expected = hmac.new(settings.razorpay_key_secret.encode(), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 
 
 @router.post("/create-order")
 async def create_order(body: OrderIn, request: Request, user=Depends(auth.require("admin"))):
     """Create a Razorpay order for an upgraded plan or scan credit pack."""
     plan_info = PLANS_DATA[body.plan]
+    org = db.get_org(user["org_id"])
+
+    # Guard unlimited tiers: add-on packs cannot be applied to unlimited accounts
+    is_unlimited = org.get("plan") == "enterprise" or org.get("scan_quota") is None
+    if plan_info["type"] == "pack" and is_unlimited:
+        raise HTTPException(400, "Account has unlimited scans; add-on packs cannot be applied.")
+
     receipt = f"rcpt_{user['org_id']}_{int(time.time())}"
     notes = {
         "org_id": str(user["org_id"]),
@@ -169,6 +176,7 @@ def verify_payment(body: VerifyIn, request: Request, user=Depends(auth.require("
     if payment["status"] == "paid":
         return {"ok": True, "message": "Payment already processed.", "plan": payment["plan"]}
 
+    # Cryptographic HMAC SHA256 signature verification (Strict)
     if not _verify_signature(body.razorpay_order_id, body.razorpay_payment_id, body.razorpay_signature):
         raise HTTPException(400, "Payment verification failed: invalid signature.")
 
@@ -178,19 +186,16 @@ def verify_payment(body: VerifyIn, request: Request, user=Depends(auth.require("
         raise HTTPException(400, "Invalid plan.")
 
     org = db.get_org(user["org_id"])
-    if plan_info["type"] == "subscription":
-        # Monthly plan upgrade (Standard or Business)
-        db.update_org(user["org_id"], plan=plan_key, scan_quota=plan_info["scans"], user_limit=plan_info["users"])
-    else:
-        # Scan top-up pack (add to current scan quota)
-        current_quota = org.get("scan_quota")
-        if current_quota is None:
-            current_quota = db.PLANS.get(org["plan"], {}).get("scans") or 100
-        new_quota = current_quota + plan_info["scans"]
-        db.update_org(user["org_id"], scan_quota=new_quota)
+    is_unlimited = org.get("plan") == "enterprise" or org.get("scan_quota") is None
+    if plan_info["type"] == "pack" and is_unlimited:
+        raise HTTPException(400, "Account has unlimited scans; add-on packs cannot be applied.")
 
-    db.update_payment(body.razorpay_order_id, body.razorpay_payment_id, status="paid")
-    audit(request, user, "payment_verified", "payment", payment["id"],
+    # Idempotent database-level settlement with race condition lock
+    already_paid, updated_payment, plan_applied = db.settle_payment(body.razorpay_order_id, body.razorpay_payment_id)
+    if already_paid or not plan_applied:
+        return {"ok": True, "message": "Payment already processed.", "plan": plan_key}
+
+    audit(request, user, "payment_verified", "payment", updated_payment["id"],
           {"plan": plan_key, "amount_inr": plan_info["price_inr"], "payment_id": body.razorpay_payment_id})
 
     # Send email receipt
@@ -232,17 +237,27 @@ def payment_history(page: Optional[int] = None, limit: int = 10, paginated: bool
 
 @router.post("/webhook")
 async def razorpay_webhook(request: Request):
-    """Handle asynchronous Razorpay webhook events (e.g. payment.captured)."""
+    """Handle asynchronous Razorpay webhook events with mandatory HMAC SHA256 verification."""
+    if not settings.razorpay_webhook_secret:
+        log.error("Webhook rejected: LABELCHECK_RAZORPAY_WEBHOOK_SECRET is not configured.")
+        raise HTTPException(500, "Webhook secret not configured.")
+
+    # 1. Require raw body before JSON parsing
     raw_body = await request.body()
-    signature = request.headers.get("X-Razorpay-Signature", "")
-    if settings.razorpay_webhook_secret:
-        expected = hmac.new(settings.razorpay_webhook_secret.encode(), raw_body, hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(expected, signature):
-            raise HTTPException(400, "Invalid webhook signature.")
+    signature = request.headers.get("x-razorpay-signature") or request.headers.get("X-Razorpay-Signature", "")
+    if not signature:
+        raise HTTPException(400, "Missing X-Razorpay-Signature header.")
+
+    # 2. Strict HMAC SHA256 verification
+    expected = hmac.new(settings.razorpay_webhook_secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        log.warning("Webhook HMAC verification failed: invalid signature")
+        raise HTTPException(400, "Invalid webhook signature.")
+
     try:
-        data = await request.json()
+        data = json.loads(raw_body.decode())
     except Exception:
-        return {"ok": True}
+        raise HTTPException(400, "Invalid JSON payload.")
 
     event = data.get("event")
     if event in ("order.paid", "payment.captured"):
@@ -253,16 +268,32 @@ async def razorpay_webhook(request: Request):
         if order_id and payment_id:
             payment = db.get_payment_by_order(order_id)
             if payment and payment["status"] != "paid":
-                db.update_payment(order_id, payment_id, status="paid")
-                plan_info = PLANS_DATA.get(payment["plan"])
-                if plan_info:
-                    org = db.get_org(payment["org_id"])
-                    if plan_info["type"] == "subscription":
-                        db.update_org(payment["org_id"], plan=payment["plan"],
-                                      scan_quota=plan_info["scans"], user_limit=plan_info["users"])
-                    else:
-                        current = org.get("scan_quota") or 100
-                        db.update_org(payment["org_id"], scan_quota=current + plan_info["scans"])
-                log.info("Webhook updated payment for order %s to paid", order_id)
+                # Settle atomically and idempotently
+                already_paid, payment_rec, plan_applied = db.settle_payment(order_id, payment_id)
+                if plan_applied:
+                    log.info("Webhook successfully settled order %s to paid", order_id)
+                else:
+                    log.info("Webhook order %s already settled by concurrent call", order_id)
+
+    elif event in ("subscription.cancelled", "subscription.halted"):
+        payload = data.get("payload", {})
+        entity = payload.get("subscription", {}).get("entity", {})
+        notes = entity.get("notes", {})
+        org_id = notes.get("org_id")
+        if org_id:
+            db.update_org(int(org_id), plan="trial", scan_quota=db.PLANS["trial"]["scans"],
+                          user_limit=db.PLANS["trial"]["users"], subscription_status="canceled")
+            log.info("Subscription cancelled for org %s", org_id)
+
+    elif event == "subscription.charged":
+        payload = data.get("payload", {})
+        entity = payload.get("subscription", {}).get("entity", {})
+        notes = entity.get("notes", {})
+        org_id = notes.get("org_id")
+        if org_id:
+            period_end = db.now() + timedelta(days=30)
+            db.update_org(int(org_id), current_period_end=period_end, subscription_status="active")
+            log.info("Subscription renewed for org %s until %s", org_id, period_end)
+
     return {"ok": True}
 

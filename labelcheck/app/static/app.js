@@ -10,53 +10,22 @@ const REVIEW = {not_submitted:"Not submitted", in_review:"In review", approved:"
 const CHANGE = {fixed:"Fixed", new_issue:"New issue", improved:"Improved", worse:"Worse", unchanged:"Unchanged", changed:"Changed"};
 let ME = null, META = null, CURRENT = null, file = null, bfiles = [], pollTimer = null, isInitializing = false;
 
-// ---------------- Session / Token Storage (Tab-Isolated) ----------------
-const SESSION_TOKEN_KEY = "lc_session_token";
-const SESSION_USER_KEY = "lc_session_user";
-const SEED_TOKEN_KEY = "lc_seed_session_token";
-const SEED_USER_KEY = "lc_seed_session_user";
+// ---------------- Session Security: Browser-Managed HttpOnly Cookies ----------------
+// Purge any legacy tokens from localStorage/sessionStorage to prevent XSS exposure
+try {
+  localStorage.removeItem("lc_session_token");
+  localStorage.removeItem("lc_seed_session_token");
+  localStorage.removeItem("lc_session_user");
+  localStorage.removeItem("lc_seed_session_user");
+  sessionStorage.removeItem("lc_session_token");
+  sessionStorage.removeItem("lc_seed_session_token");
+  sessionStorage.removeItem("lc_session_user");
+  sessionStorage.removeItem("lc_seed_session_user");
+} catch (_) {}
 
-function getStoredToken() {
+function clearSessionAuth() {
   try {
-    let tok = sessionStorage.getItem(SESSION_TOKEN_KEY);
-    if (!tok) {
-      tok = localStorage.getItem(SEED_TOKEN_KEY);
-      if (tok) {
-        sessionStorage.setItem(SESSION_TOKEN_KEY, tok);
-        const seedUser = localStorage.getItem(SEED_USER_KEY);
-        if (seedUser) sessionStorage.setItem(SESSION_USER_KEY, seedUser);
-      }
-    }
-    return tok || null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function setSessionAuth(token, user) {
-  try {
-    if (token) {
-      sessionStorage.setItem(SESSION_TOKEN_KEY, token);
-      localStorage.setItem(SEED_TOKEN_KEY, token);
-      if (user) {
-        sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(user));
-        localStorage.setItem(SEED_USER_KEY, JSON.stringify(user));
-      }
-    } else {
-      clearSessionAuth(false);
-    }
-  } catch (_) {}
-}
-
-function clearSessionAuth(allTabs = false) {
-  try {
-    sessionStorage.removeItem(SESSION_TOKEN_KEY);
-    sessionStorage.removeItem(SESSION_USER_KEY);
     sessionStorage.removeItem("lc_active_tab");
-    if (allTabs) {
-      localStorage.removeItem(SEED_TOKEN_KEY);
-      localStorage.removeItem(SEED_USER_KEY);
-    }
   } catch (_) {}
   ME = null;
 }
@@ -64,10 +33,7 @@ function clearSessionAuth(allTabs = false) {
 // ---------------- API helper ----------------
 async function api(path, opts = {}) {
   opts.headers = Object.assign({"X-LabelCheck": "1"}, opts.headers || {});
-  const token = getStoredToken();
-  if (token && !opts.headers["Authorization"]) {
-    opts.headers["Authorization"] = `Bearer ${token}`;
-  }
+  opts.credentials = "include"; // Transmit HttpOnly session cookies automatically
   if (opts.json !== undefined) {
     opts.body = JSON.stringify(opts.json);
     opts.headers["Content-Type"] = "application/json";
@@ -75,7 +41,7 @@ async function api(path, opts = {}) {
   }
   const r = await fetch(path, opts);
   if (r.status === 401 && path !== "/api/auth/login" && path !== "/api/auth/register") {
-    clearSessionAuth(false);
+    clearSessionAuth();
     if (!isInitializing && path !== "/api/auth/me") showLogin();
     throw new Error("Please log in.");
   }
@@ -221,8 +187,8 @@ $("#login-form").onsubmit = async e => {
         totp: $("#l-totp").value
       }
     });
-    if (res && res.token) {
-      setSessionAuth(res.token, res.user);
+    if (res && res.user) {
+      ME = res.user;
     }
     $("#l-pass").value = ""; $("#l-totp").value = ""; $("#l-totp-wrap").classList.add("hidden");
     if (location.hash === "#/login" || location.hash === "#login") {
@@ -257,29 +223,8 @@ $("#signup-form").onsubmit = async e => {
       }
     });
     $("#su-pass").value = "";
-
-    if (reg.verify_token) {
-      // In dev mode without SMTP, allow instant 1-click verification
-      $("#su-msg").style.color = "#16a34a";
-      $("#su-msg").innerHTML = `Account created! <a href="${esc(reg.verify_url)}">Click here to verify email</a>.`;
-      return;
-    }
-
-    if (reg.user && !reg.user.email_verified) {
-      $("#su-msg").style.color = "#16a34a";
-      $("#su-msg").textContent = "Account created! We've sent a verification link to your email. Please check your inbox and verify before logging in.";
-      return;
-    }
-
-    if (reg && reg.token) {
-      setSessionAuth(reg.token, reg.user);
-    }
-    location.hash = "#/";
-    await start();
-
-    if (chosenPlan && chosenPlan !== "trial") {
-      await checkoutRazorpay(chosenPlan);
-    }
+    $("#su-msg").style.color = "#16a34a";
+    $("#su-msg").textContent = reg.message || "Account created! Please check your email to verify your address.";
   } catch (err) {
     $("#su-msg").style.color = "#dc2626";
     $("#su-msg").textContent = err.message;
@@ -317,10 +262,10 @@ $("#setpw-form").onsubmit = async e => {
     $("#s-pass").value = $("#s-pass2").value = "";
     location.hash = "#/";
     if (SETPW.kind === "invite") {
-      if (res && res.token) setSessionAuth(res.token, res.user);
+      if (res && res.user) ME = res.user;
       await start();
     } else {
-      clearSessionAuth(false);
+      clearSessionAuth();
       showLogin();
       $("#l-msg").textContent = "Password changed. Please log in.";
     }
@@ -329,7 +274,7 @@ $("#setpw-form").onsubmit = async e => {
 $("#terms-ok").onclick = async () => { await api("/api/auth/accept-terms", {method: "POST"}); await start(); };
 $("#logout").onclick = async () => {
   try { await api("/api/auth/logout", {method: "POST"}); } catch (_) {}
-  clearSessionAuth(true);
+  clearSessionAuth();
   location.hash = "#/";
   showHome();
 };
@@ -424,20 +369,14 @@ async function route() {
 async function start() {
   try {
     ME = await api("/api/auth/me");
-    setSessionAuth(getStoredToken(), ME);
   } catch (_) {
-    clearSessionAuth(false);
+    clearSessionAuth();
     showHome();
     return;
   }
   if (!ME.terms_accepted) { showOnly("terms-view"); return; }
   META = META || await api("/api/meta");
   showOnly("app-view");
-  const rset = $("#ruleset");
-  if (rset) {
-    rset.textContent = "Rule set " + META.ruleset.version;
-    rset.title = META.ruleset.note;
-  }
   const opts = Object.entries(META.categories).map(([k, v]) => `<option value="${esc(k)}">${esc(v)}</option>`).join("");
   $("#category").innerHTML = opts; $("#bcat").innerHTML = opts;
   const isPlatformAdmin = Boolean(ME.is_platform_admin || ME.name === "Administrator");
@@ -524,6 +463,9 @@ $("#form").onsubmit = async e => {
   fd.append("imported", $("#imported").checked);
   fd.append("auto_straighten", $("#straighten").checked);
   fd.append("listing_text", $("#listing").value);
+  if ($("#listing-url") && $("#listing-url").value) {
+    fd.append("listing_url", $("#listing-url").value.trim());
+  }
   $("#go").disabled = true; $("#status").textContent = "Reading the label…";
   try {
     const j = await api("/api/scans", {method: "POST", body: fd});
@@ -730,6 +672,7 @@ function render(j, reset = true) {
           ${ex.fssai ? `<tr><td>FSSAI licence</td><td>${esc(ex.fssai.licence || "not read")}</td></tr>` : ""}
           <tr><td>Panel size used</td><td>${ou.panel_width_mm ? esc(ou.panel_width_mm + " x " + ou.panel_height_mm + " mm") : "not given"}</td></tr>
         </table>
+        ${j.listing && j.listing.url ? `<p style="margin:8px 0 4px;font-size:13px;"><b>Listing link:</b> <a href="${esc(j.listing.url)}" target="_blank" rel="noopener noreferrer">${esc(j.listing.url)}</a></p>` : ""}
         ${j.listing && j.listing.text ? `<details><summary>E-commerce listing text</summary><pre>${esc(j.listing.text.slice(0, 4000))}</pre></details>` : ""}
         <details><summary>Raw OCR text</summary><pre>${esc(j.ocr_text)}</pre></details>
       </div>
@@ -1024,7 +967,8 @@ async function loadCompany(userPage = 1) {
   const o = await api("/api/org");
   const quota = o.scan_quota === null ? "unlimited" : o.scan_quota;
   const ulim = o.user_limit === null ? "unlimited" : o.user_limit;
-  $("#org-kpis").innerHTML = [["Plan", o.plan_label], ["Scans this month", `${o.scans_this_month} / ${quota}`],
+  const addon = o.purchased_addon_credits ? ` (+${o.purchased_addon_credits} pack credits)` : "";
+  $("#org-kpis").innerHTML = [["Plan", o.plan_label], ["Scans this month", `${o.scans_this_month} / ${quota}${addon}`],
     ["Active users", `${o.users} / ${ulim}`]].map(([l, n]) => `<div class="card kpi"><div class="v">${esc(n)}</div><div class="l">${l}</div></div>`).join("");
   $("#o-name").value = o.name; $("#o-ret").value = o.retention_days || ""; $("#o-2fa").checked = o.require_2fa;
 
@@ -1538,16 +1482,14 @@ window.addEventListener("hashchange", async () => {
 });
 
 async function rehydrateSession() {
-  const token = getStoredToken();
   try {
     const u = await api("/api/auth/me");
     if (u && u.id) {
       ME = u;
-      setSessionAuth(token || getStoredToken(), u);
       return true;
     }
   } catch (_) {
-    clearSessionAuth(false);
+    clearSessionAuth();
   }
   return false;
 }

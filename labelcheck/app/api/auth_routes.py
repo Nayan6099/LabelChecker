@@ -39,12 +39,15 @@ def login(body: LoginIn, request: Request):
     ip = auth.client_ip(request)
     clean_email = body.email.strip().lower()
 
-    # 1. Identifier-based & IP-based brute-force protection
-    if auth.locked(clean_email, ip):
+    # 1. Dual-Key Brute-Force Protection (counts only failed attempts)
+    if auth.is_account_locked(clean_email):
         LOGINS.labels("locked").inc()
-        log.warning("Login locked out due to excessive failed attempts", extra={"ip": ip, "reason": "rate_limited"})
-        raise HTTPException(429, "Too many failed attempts. Try again in 15 minutes.")
-    auth.rate_limit("login-ip", ip, 30, 15 * 60, "Too many login attempts from this network. Try later.")
+        log.warning("Login locked out: too many failed attempts for account", extra={"ip": ip, "email": clean_email})
+        raise HTTPException(429, "Too many failed attempts on this account. Try again in 15 minutes.")
+    if not auth.is_rate_limit_exempt(ip) and auth.is_ip_locked(ip):
+        LOGINS.labels("locked").inc()
+        log.warning("Login locked out: too many aggregate failed attempts for IP", extra={"ip": ip})
+        raise HTTPException(429, "Too many failed login attempts from this network. Try later.")
 
     # 2. Look up user
     u = db.user_by_email(clean_email)
@@ -55,7 +58,7 @@ def login(body: LoginIn, request: Request):
 
     org = db.get_org(u["org_id"]) if u else None
     if not u or not u["active"] or not org or not org["active"] or not valid_password:
-        auth.record_fail(clean_email, ip)
+        auth.record_login_fail(clean_email, ip)
         LOGINS.labels("failed").inc()
         log.warning("Login failed: invalid credentials", extra={"ip": ip, "reason": "invalid_credentials"})
         if u:
@@ -72,14 +75,14 @@ def login(body: LoginIn, request: Request):
         if not body.totp:
             raise HTTPException(401, {"code": "totp_required", "message": "Enter the 6-digit code from your app."})
         if not auth.verify_totp(u, body.totp):
-            auth.record_fail(clean_email, ip)
+            auth.record_login_fail(clean_email, ip)
             LOGINS.labels("failed_2fa").inc()
             log.warning("Login 2FA verification failed", extra={"ip": ip, "user_id": u["id"]})
             db.log_event(u["org_id"], u["id"], "login_failed_2fa", "user", u["id"], ip=ip)
             raise HTTPException(401, {"code": "totp_invalid", "message": "Wrong or expired code."})
 
-    # 6. Success
-    auth.clear_fails(clean_email, ip)
+    # 6. Success: Clear account failure counter. Successful logins NEVER count against rate limiter.
+    auth.clear_login_fails(clean_email, ip)
     token = auth.new_session(u["id"])
     db.update_user(u["id"], last_login_at=db.now())
     db.log_event(u["org_id"], u["id"], "login", "user", u["id"], ip=ip)
@@ -89,11 +92,11 @@ def login(body: LoginIn, request: Request):
 
 
 class RegisterIn(BaseModel):
+    model_config = {"extra": "ignore"}
     company_name: str = Field(min_length=2, max_length=100)
     name: str = Field(min_length=2, max_length=100)
     email: str = Field(max_length=254, pattern=EMAIL_RE)
     password: str = Field(min_length=12, max_length=200)
-    plan: str = Field("trial", pattern="^(trial|standard|business|pack_1|pack_50|pack_250)$")
     website: Optional[str] = Field(None, max_length=100)  # Bot honeypot
 
     @field_validator("name", "company_name")
@@ -124,7 +127,9 @@ def register(body: RegisterIn, request: Request):
     if problem:
         raise HTTPException(400, problem)
 
-    oid = db.create_org(body.company_name.strip(), body.plan)
+    # Force all self-registrations strictly to the free tier ('trial').
+    # Strip any user-supplied plan/tier/role/quota to prevent privilege escalation.
+    oid = db.create_org(body.company_name.strip(), plan="trial")
     # Require email verification on self-registration
     uid = db.create_user(oid, clean_email, body.name.strip(), auth.hash_password(body.password),
                          "admin", email_verified=False)
@@ -137,21 +142,26 @@ def register(body: RegisterIn, request: Request):
     # Generate single-use email verification token (valid 24h)
     vtok = auth.new_link_token(uid, "verify", hours=24)
     vurl = f"{settings.public_url}/#/verify/{vtok}"
+
+    if settings.production and not settings.smtp_host:
+        log.error("SMTP not configured in production. Cannot send verification email.")
+        raise HTTPException(500, "Email delivery service unavailable. Registration could not be completed.")
+
     try:
         mailer.verify_email(clean_email, body.name.strip(), vurl)
     except Exception as e:
         log.warning("Could not send verification email: %s", e)
 
-    resp = _session_response(u, token)
-    # Provide verify url directly in development / test environments without SMTP
     if not settings.smtp_host:
-        import json
-        data = resp.body
-        j = json.loads(data)
-        j["verify_url"] = vurl
-        j["verify_token"] = vtok
-        return JSONResponse(j, status_code=200, headers=dict(resp.headers))
-    return resp
+        # In Development/Staging: Log verification links to backend server stdout/console exclusively.
+        print(f"[AUTH DEV] Verification link for {clean_email}: {vurl}")
+        log.info("Email verification link (dev mode): %s", vurl)
+
+    # Strictly return non-sensitive metadata only. Never leak verification tokens or activation links in response.
+    return {
+        "success": True,
+        "message": "Account created. Please check your email to verify your address."
+    }
 
 
 class VerifyIn(BaseModel):
@@ -359,13 +369,19 @@ def totp_enable(body: TotpCodeIn, request: Request, user=Depends(auth.session_on
 
 class Disable2faIn(BaseModel):
     password: str = Field(max_length=200)
+    code: str = Field(min_length=6, max_length=10, description="Current valid 6-digit TOTP code")
 
 
 @router.post("/2fa/disable")
 def totp_disable(body: Disable2faIn, request: Request, user=Depends(auth.session_only)):
     full = db.user_by_id(user["id"])
     if not auth.check_password(full["password_hash"], body.password):
-        raise HTTPException(400, "Password is wrong.")
+        raise HTTPException(401, "Password is wrong.")
+    if not full.get("totp_enabled") or not full.get("totp_secret"):
+        raise HTTPException(400, "Two-factor authentication is not currently enabled.")
+    decrypted_secret = auth.decrypt(full["totp_secret"])
+    if not auth.verify_totp(full, body.code, decrypted_secret):
+        raise HTTPException(403, "Invalid or expired two-factor authentication code.")
     org = db.get_org(user["org_id"])
     if org["require_2fa"]:
         raise HTTPException(409, "Your company requires two-step login. You cannot turn it off.")

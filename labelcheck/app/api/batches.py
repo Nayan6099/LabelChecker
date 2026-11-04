@@ -77,7 +77,7 @@ async def create_batch(
         except HTTPException as e:
             errors.append({"file": fname, "error": e.detail})
             continue
-        loaded.append((fname, kind, data, opts, make_listing(r.get("listing_text"))))
+        loaded.append((fname, kind, data, opts, make_listing(r.get("listing_text"), r.get("listing_url"))))
     if not loaded:
         raise HTTPException(400, {"message": "No valid files in the batch.", "errors": errors})
     reserve(user, len(loaded))

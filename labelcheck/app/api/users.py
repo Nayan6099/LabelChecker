@@ -1,5 +1,6 @@
 """Company administration: users, company settings, API keys, audit log, data export."""
 import json
+import logging
 import os
 import re
 import tempfile
@@ -17,6 +18,7 @@ from ..storage import store
 from .common import audit, check_user_limit, paginate_response
 
 router = APIRouter(prefix="/api", tags=["company admin"])
+log = logging.getLogger("labelcheck.users")
 EMAIL = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
 
@@ -96,33 +98,45 @@ def users_reinvite(uid: int, request: Request, user=Depends(auth.require("admin"
 
 @router.patch("/users/{uid}")
 def users_update(uid: int, body: UserPatch, request: Request, user=Depends(auth.require("admin"))):
-    target = db.user_by_id(uid)
-    if not target or target["org_id"] != user["org_id"]:
-        raise HTTPException(404, "User not found.")
-    if uid == user["id"] and (body.active is False or (body.role and body.role != "admin")):
-        raise HTTPException(400, "You cannot remove your own admin access.")
-    vals, detail = {}, {}
-    if body.role:
-        vals["role"] = detail["role"] = body.role
-    if body.active is not None:
-        if body.active and not target["active"]:
-            check_user_limit(user["org_id"])
-        vals["active"] = detail["active"] = body.active
-    if body.password:
-        problem = auth.password_problem(body.password, {"email": body.email, "name": body.name})
-        if problem:
-            raise HTTPException(400, problem)
-        vals["password_hash"] = auth.hash_password(body.password)
-        detail["password"] = "reset"  # noqa: S105 (audit note, not a password)
-    if body.reset_2fa:
-        vals.update(totp_enabled=False, totp_secret=None)
-        detail["2fa"] = "reset"
-    if vals:
-        db.update_user(uid, **vals)
-        if body.active is False or body.password or body.reset_2fa:
-            db.delete_user_sessions(uid)
-        audit(request, user, "user_updated", "user", uid, detail)
-    return {"ok": True}
+    try:
+        target = db.user_by_id(uid)
+        if not target or target["org_id"] != user["org_id"]:
+            raise HTTPException(404, "User not found.")
+        if uid == user["id"] and (body.active is False or (body.role and body.role != "admin")):
+            raise HTTPException(400, "You cannot remove your own admin access.")
+        vals, detail = {}, {}
+        if body.role:
+            vals["role"] = detail["role"] = body.role
+        if body.active is not None:
+            if body.active and not target["active"]:
+                check_user_limit(user["org_id"])
+            vals["active"] = detail["active"] = body.active
+        if body.password:
+            # Validate using the target user's attributes (not body which lacks them)
+            problem = auth.password_problem(body.password, {"email": target["email"], "name": target["name"]})
+            if problem:
+                raise HTTPException(400, problem)
+            vals["password_hash"] = auth.hash_password(body.password)
+            detail["password"] = "reset"  # noqa: S105 (audit note, not a password)
+            # Decoupled / defensive notification dispatch so email errors do not fail password reset
+            try:
+                mailer.password_reset_by_admin(target["email"], target["name"], user["name"])
+            except Exception as mail_err:
+                log.warning("Could not dispatch password reset notification to %s: %s", target["email"], mail_err)
+        if body.reset_2fa:
+            vals.update(totp_enabled=False, totp_secret=None)
+            detail["2fa"] = "reset"
+        if vals:
+            db.update_user(uid, **vals)
+            if body.active is False or body.password or body.reset_2fa:
+                db.delete_user_sessions(uid)
+            audit(request, user, "user_updated", "user", uid, detail)
+        return {"ok": True, "message": "User updated successfully."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.exception("Unhandled error in users_update for user %s: %s", uid, e)
+        raise HTTPException(500, f"Failed to update user: {e}")
 
 
 @router.delete("/users/{uid}")
